@@ -2,7 +2,7 @@
 
 # ⚡ CTI-Automator: Operational Threat Intelligence
 
-### Pipeline Privado de Ingesta OSINT y Automatización hacia OpenCTI
+### Private OSINT Ingestion and OpenCTI Automation Pipeline
 
 [![Status](https://img.shields.io/badge/Status-Development-success?style=for-the-badge&logo=statuspage&logoColor=white)](https://github.com/kta41/CTI-Automator)
 [![Python](https://img.shields.io/badge/Python-3.11+-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
@@ -12,18 +12,18 @@
 
 <br/>
 
-### 🛠️ Stack Tecnológico
-**Lenguaje & Empaquetado:** Python 3.11+ | pyproject.toml  
-**Ingesta & Modelado:** Requests | pdfplumber | Pydantic  
-**Motor IA & Orquestación:** Ollama (`qwen`) | FastMCP  
-**Exportación CTI:** pycti (OpenCTI) | PyMISP | STIX 2.1  
-**CI/CD & Calidad:** Ruff | Mypy | Pytest | GitHub Actions  
+### 🛠️ Tech Stack
+**Language & Packaging:** Python 3.11+ | pyproject.toml  
+**Ingestion & Modeling:** Requests | pdfplumber | Pydantic  
+**AI Engine & Orchestration:** Ollama (`qwen`) | FastMCP  
+**CTI Export:** pycti (OpenCTI) | PyMISP | STIX 2.1  
+**CI/CD & Code Quality:** Ruff | Mypy | Pytest | GitHub Actions  
 
 <br/>
 
 <p align="center">
-  Un <b>agente de Inteligencia de Amenazas (CTI)</b> modular y <i>privacy-first</i>.<br/>
-  Diseñado para ingerir OSINT crudo, extraer Indicadores de Compromiso (IoCs) accionables y mapear TTPs directamente hacia <b>OpenCTI</b> usando lógica determinista e IA local.
+  A modular and <i>privacy-first</i> <b>Cyber Threat Intelligence (CTI) agent</b>.<br/>
+  Designed to ingest raw OSINT, extract actionable Indicators of Compromise (IoCs), and map TTPs directly into <b>OpenCTI</b> using deterministic logic and local AI.
 </p>
 
 </div>
@@ -32,129 +32,129 @@
 
 ---
 
-## 🏗️ Arquitectura del Sistema
+## 🏗️ System Architecture
 
-CTI-Automator opera a través de un pipeline secuencial de "Tubería" (Collector -> Parser -> Emitter) para garantizar la integridad de los datos antes de su inyección en las plataformas de defensa.
+CTI-Automator operates through a sequential pipeline (Collector -> Parser -> Emitter) to ensure data integrity before injection into defense platforms.
 
 ```text
-                                  [ Fuentes de Inteligencia ]
-                             (AlienVault OTX, Abuse.ch, Informes PDF)
+                                  [ Intelligence Sources ]
+                             (AlienVault OTX, Abuse.ch, PDF Reports)
                                                │
                                                ▼
                                   ┌────────────────────────┐
-                                  │  Módulo Collector (In) │
-                                  │ APIs REST & pdfplumber │
+                                  │  Collector Module (In) │
+                                  │ REST APIs & pdfplumber │
                                   └────────────┬───────────┘
                                                │
                    ┌───────────────────────────┴───────────────────────────┐
                    ▼                                                       ▼
      ┌───────────────────────────┐                           ┌───────────────────────────┐
-     │ Extracción Determinista   │                           │ Extracción Semántica (IA) │
-     │ Regex para IoCs (IP, URL) │                           │ Ollama (Qwen) via FastMCP │
-     │ Limpieza y Defanging      │                           │ Mapeo MITRE ATT&CK        │
+     │ Deterministic Extraction  │                           │ Semantic Extraction (AI)  │
+     │ Regex for IoCs (IP, URL)  │                           │ Ollama (Qwen) via FastMCP │
+     │ Cleaning and Defanging    │                           │ MITRE ATT&CK Mapping      │
      └─────────────┬─────────────┘                           └─────────────┬─────────────┘
                    │                                                       │
                    ├────────────────► [ Pydantic Models ] ◄────────────────┤
-                   │                (Estructura Unificada)                 │
+                   │                  (Unified Structure)                  │
                    ▼                                                       ▼
      ┌───────────────────────────┐                           ┌───────────────────────────┐
-     │   Exportador a OpenCTI    │                           │    Exportador STIX 2.1    │
-     │ Cliente pycti / GraphQL   │                           │ Generación de JSON local  │
+     │     OpenCTI Exporter      │                           │    STIX 2.1 Exporter      │
+     │  pycti Client / GraphQL   │                           │  Local JSON Generation    │
      └───────────────────────────┘                           └───────────────────────────┘
 ```
 
-El agente desacopla la obtención de los datos de su procesamiento, permitiendo conectar múltiples fuentes o destinos sin alterar el motor central.
+The agent decouples data collection from processing, allowing the integration of multiple sources or destinations without altering the core engine.
 
 ---
 
-## 📁 Estructura del Repositorio
+## 📁 Repository Structure
 
 ```text
 .
-├── src/cti_automator/   # Código fuente principal
-│   ├── cli.py           # Entrypoint para la terminal
-│   ├── connectors/      # Clientes API (OTX, ThreatFox)
-│   ├── parsers/         # Expresiones regulares e IA (Defanging)
-│   └── emitters/        # Clientes de OpenCTI y exportadores STIX
-├── tests/               # Pruebas unitarias (Pytest)
-├── docs/                # Documentación de la arquitectura
-├── .github/workflows/   # CI/CD: Pipeline de release automatizada
-├── pyproject.toml       # Configuración y dependencias del paquete
-└── .env.example         # Plantilla de tokens y configuración
+├── src/cti_automator/   # Main source code
+│   ├── cli.py           # CLI entrypoint
+│   ├── connectors/      # API clients (OTX, ThreatFox)
+│   ├── parsers/         # Regular expressions and AI (Defanging)
+│   └── emitters/        # OpenCTI clients and STIX exporters
+├── tests/               # Unit tests (Pytest)
+├── docs/                # Architecture documentation
+├── .github/workflows/   # CI/CD: Automated release pipeline
+├── pyproject.toml       # Package configuration and dependencies
+└── .env.example         # Tokens and configuration template
 ```
 
-Este repositorio está preparado para distribución. El pipeline de GitHub Actions compilará y generará automáticamente un *Release* (`.whl` y `.tar.gz`) cada vez que se publique un *tag* semántico.
+This repository is ready for distribution. The GitHub Actions pipeline will automatically build and generate a *Release* (`.whl` and `.tar.gz`) every time a semantic *tag* is pushed.
 
 ---
 
-## ⚙️ Configuración y Desarrollo
+## ⚙️ Configuration & Development
 
-Construido con tipado estricto y herramientas modernas de DevSecOps, el entorno local se despliega así:
+Built with strict typing and modern DevSecOps tools, the local environment is set up as follows:
 
 ```bash
-# Aislar e instalar con herramientas de desarrollo
+# Isolate and install with development tools
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -e '.[dev]'
 ```
 
-Aplica los controles de calidad (el código sucio genera inteligencia poco fiable):
+Apply quality checks (dirty code generates unreliable intelligence):
 
 ```bash
-ruff check src tests  # Linting & Formateo
-mypy src              # Comprobación estricta de tipos
-pytest                # Batería de tests
+ruff check src tests  # Linting & Formatting
+mypy src              # Strict type checking
+pytest                # Test suite
 ```
 
 ---
 
-## 📡 Conectores Operativos (Fase 2)
+## 📡 Operational Connectors (Phase 2)
 
-La capa de ingesta determinista es estricta y modular. Actualmente expone dos clientes principales para la recopilación continua de OSINT:
+The deterministic ingestion layer is strict and modular. It currently exposes two main clients for continuous OSINT gathering:
 
-- `cti_automator.connectors.OTXClient`: Extrae los pulsos a los que estás suscrito en AlienVault OTX.
-- `cti_automator.connectors.ThreatFoxClient`: Consulta Abuse.ch ThreatFox en busca de infraestructura activa de malware.
+- `cti_automator.connectors.OTXClient`: Pulls subscribed pulses from AlienVault OTX.
+- `cti_automator.connectors.ThreatFoxClient`: Queries Abuse.ch ThreatFox for active malware infrastructure.
 
-**Bajo el capó:**
-Ambos conectores imponen la integridad de los datos mediante modelos **Pydantic**. Los fallos de red o las respuestas malformadas de las APIs upstream se capturan y normalizan en un `ConnectorError` estándar. 
+**Under the hood:**
+Both connectors enforce data integrity via **Pydantic** models. Network failures or malformed upstream API responses are trapped and normalized into a standard `ConnectorError`. 
 
-*Nota: Las credenciales deben inyectarse a través de variables de entorno (ver `.env.example`). Para mantener los estándares de seguridad de contenedores, el paquete no carga archivos `.env` automáticamente de forma interna.*
+*Note: Credentials must be injected via environment variables (see `.env.example`). To maintain container security standards, the package does not load `.env` files automatically internally.*
 
 ---
 
-## 💡 Ejecución y Uso
+## 💡 Execution & Usage
 
 <details>
-<summary><b>1. Ejecución desde CLI</b></summary>
+<summary><b>1. CLI Execution</b></summary>
 
-Una vez instalado, la herramienta se registra globalmente y puede ejecutarse desde la terminal:
+Once installed, the tool is globally registered and can be executed from the terminal:
 
 ```bash
-# Ingesta desde una API y exportación a JSON STIX
+# Ingest from an API and export to STIX JSON
 cti-automator ingest --source otx --export stix
 
-# Parseo de un informe PDF utilizando el agente IA
+# Parse a PDF report using the AI agent
 cti-automator parse --file report.pdf --model qwen --export opencti
 ```
 </details>
 
 <details>
-<summary><b>2. Configuración de Credenciales</b></summary>
+<summary><b>2. Credentials Configuration</b></summary>
 
-Copia la plantilla de entorno e introduce tus tokens de OpenCTI y fuentes:
+Copy the environment template and insert your OpenCTI and source tokens:
 
 ```bash
 cp .env.example .env
 nano .env
 ```
-Asegúrate de exportar las variables antes de ejecutar la herramienta: `set -a; source .env; set +a`.
+Make sure to export the variables before running the tool: `set -a; source .env; set +a`.
 </details>
 
 ---
 
 <div align="center">
 
-Desarrollado y mantenido por **[Tomás Vinuesa Lago](https://github.com/Kta41)**  
-*Las contribuciones, sugerencias y comentarios siempre son bienvenidos.*
+Developed and maintained by **[Tomás Vinuesa Lago](https://github.com/Kta41)**  
+*Contributions, suggestions, and feedback are always welcome.*
 
 </div>
