@@ -166,6 +166,31 @@ default.
 before using the OpenCTI adapter. The exporter accepts injected clients for
 testing and does not connect during module import.
 
+## 🖥️ CLI and MCP (Phase 5)
+
+The installed package exposes the `cti-automator` command:
+
+```bash
+cti-automator --help
+cti-automator analyze-pdf report.pdf
+cti-automator export-pdf report.pdf --stix-output report.bundle.json
+cti-automator export-pdf report.pdf --opencti
+cti-automator ingest-otx --modified-since 2026-01-01
+cti-automator ingest-threatfox --days 1
+```
+
+Run the FastMCP server over the default transport:
+
+```bash
+cti-automator mcp
+cti-automator mcp --transport streamable-http
+```
+
+The MCP server exposes `analyze_pdf`, `export_pdf_to_stix`,
+`export_pdf_to_opencti`, `get_otx_pulses`, and `get_threatfox_iocs`. Tools
+accept file paths and validated arguments; credentials are read from the
+environment at server startup.
+
 ## 🚀 Creating a release
 
 The release workflow runs for tags matching `v*`. Before creating one:
