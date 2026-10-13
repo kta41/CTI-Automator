@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from typing import Any
+from urllib.parse import urlparse
 
 import requests
 
@@ -10,6 +11,7 @@ from cti_automator.config import Settings
 from cti_automator.connectors._http import request_json
 from cti_automator.exceptions import ConnectorError
 from cti_automator.models import Indicator, IndicatorType, IntelligenceSource, OTXPulse
+from cti_automator.observability import observe
 
 
 class OTXClient:
@@ -23,6 +25,7 @@ class OTXClient:
         self._settings = settings
         self._session = session or requests.Session()
 
+    @observe("otx")
     def get_pulses(self, *, modified_since: str | None = None) -> tuple[OTXPulse, ...]:
         """Fetch subscribed pulses, optionally filtered by modification time."""
         params = {"modified_since": modified_since} if modified_since else None
@@ -38,6 +41,33 @@ class OTXClient:
         results = payload.get("results")
         if not isinstance(results, list):
             raise ConnectorError("OTX response is missing a results list")
+        results = list(results)
+        for page in range(2, 102):
+            next_page = payload.get("next")
+            if not next_page:
+                break
+            if (
+                not isinstance(next_page, str)
+                or urlparse(next_page).netloc
+                != urlparse(self._settings.otx_base_url).netloc
+                or urlparse(next_page).scheme
+                != urlparse(self._settings.otx_base_url).scheme
+            ):
+                raise ConnectorError("OTX returned an invalid pagination link")
+            if page > 100:
+                raise ConnectorError("OTX pagination exceeded the 100-page limit")
+            payload = request_json(
+                self._session,
+                "GET",
+                next_page,
+                headers={"X-OTX-API-KEY": self._settings.require_otx_api_key()},
+                timeout=self._settings.request_timeout,
+                verify=self._settings.verify_tls,
+            )
+            extra = payload.get("results")
+            if not isinstance(extra, list):
+                raise ConnectorError("OTX page is missing a results list")
+            results.extend(extra)
 
         pulses: list[OTXPulse] = []
         for raw_pulse in results:

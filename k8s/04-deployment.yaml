@@ -61,6 +61,8 @@ spec:
           volumeMounts:
             - name: tmp
               mountPath: /tmp
+            - name: state
+              mountPath: /state
           resources:
             requests:
               cpu: 100m
@@ -72,3 +74,6 @@ spec:
         - name: tmp
           emptyDir:
             sizeLimit: 128Mi
+        - name: state
+          persistentVolumeClaim:
+            claimName: cti-automator-state

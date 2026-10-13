@@ -3,6 +3,10 @@ kind: Service
 metadata:
   name: cti-automator
   namespace: cti-automator
+  annotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/path: /metrics
+    prometheus.io/port: "8000"
   labels:
     app.kubernetes.io/name: cti-automator
 spec:

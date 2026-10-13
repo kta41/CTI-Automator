@@ -27,6 +27,28 @@ class Settings(BaseModel):
     opencti_token: str | None = Field(default=None, repr=False)
     request_timeout: float = Field(default=30.0, gt=0)
     verify_tls: bool = True
+    virustotal_api_key: str | None = Field(default=None, repr=False)
+    shodan_api_key: str | None = Field(default=None, repr=False)
+    enrichment_cache_ttl: float = Field(default=3600, gt=0)
+    enrichment_requests_per_minute: int = Field(default=4, ge=1, le=1000)
+    restricted_domains: tuple[str, ...] = ()
+    github_token: str | None = Field(default=None, repr=False)
+    repository_allowlist: tuple[str, ...] = ()
+    repository_checkpoint: str = "/state/repositories.json"
+    repository_max_files: int = Field(default=20, ge=1, le=100)
+    repository_max_bytes: int = Field(default=100_000, ge=1, le=1_000_000)
+    log_level: str = "INFO"
+
+    @field_validator("restricted_domains")
+    @classmethod
+    def normalize_restricted_domains(cls, domains: tuple[str, ...]) -> tuple[str, ...]:
+        return tuple(
+            dict.fromkeys(
+                domain.strip().lower().rstrip(".")
+                for domain in domains
+                if domain.strip()
+            )
+        )
 
     @field_validator(
         "otx_base_url",
@@ -72,11 +94,27 @@ class Settings(BaseModel):
             "AI_MODEL": "ai_model",
             "OPENCTI_URL": "opencti_url",
             "OPENCTI_TOKEN": "opencti_token",
+            "VIRUSTOTAL_API_KEY": "virustotal_api_key",
+            "SHODAN_API_KEY": "shodan_api_key",
+            "CTI_ENRICHMENT_CACHE_TTL": "enrichment_cache_ttl",
+            "CTI_ENRICHMENT_RPM": "enrichment_requests_per_minute",
+            "GITHUB_TOKEN": "github_token",
+            "CTI_REPOSITORY_CHECKPOINT": "repository_checkpoint",
+            "CTI_REPOSITORY_MAX_FILES": "repository_max_files",
+            "CTI_REPOSITORY_MAX_BYTES": "repository_max_bytes",
+            "CTI_LOG_LEVEL": "log_level",
         }
         for environment_name, field_name in environment_map.items():
             value = os.getenv(environment_name)
             if value is not None and value.strip():
                 values[field_name] = value
+        for env, name in {
+            "CTI_REPOSITORY_ALLOWLIST": "repository_allowlist",
+            "CTI_RESTRICTED_DOMAINS": "restricted_domains",
+        }.items():
+            values[name] = tuple(
+                item.strip() for item in os.getenv(env, "").split(",") if item.strip()
+            )
         return cls.model_validate(values)
 
     def require_otx_api_key(self) -> str:

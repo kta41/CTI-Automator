@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from ipaddress import ip_address
 from typing import Any
 
 import requests
@@ -16,6 +17,7 @@ from cti_automator.models import (
     IntelligenceSource,
     ThreatFoxQueryResult,
 )
+from cti_automator.observability import observe
 
 
 class ThreatFoxClient:
@@ -29,10 +31,11 @@ class ThreatFoxClient:
         self._settings = settings
         self._session = session or requests.Session()
 
+    @observe("threatfox")
     def get_recent_iocs(self, *, days: int = 1) -> ThreatFoxQueryResult:
         """Fetch IOCs published during the requested number of days."""
-        if days < 1:
-            raise ValueError("days must be greater than zero")
+        if not 1 <= days <= 7:
+            raise ValueError("days must be between 1 and 7")
         payload = self._post({"query": "get_iocs", "days": days})
         return self._parse_result(payload)
 
@@ -60,6 +63,10 @@ class ThreatFoxClient:
     @staticmethod
     def _parse_result(payload: dict[str, Any]) -> ThreatFoxQueryResult:
         query_status = payload.get("query_status")
+        if query_status == "no_result":
+            return ThreatFoxQueryResult(query_status=query_status, indicators=())
+        if query_status != "ok":
+            raise ConnectorError("ThreatFox rejected the query")
         raw_data = payload.get("data", [])
         if not isinstance(query_status, str) or not isinstance(raw_data, list):
             raise ConnectorError("ThreatFox response has an invalid shape")
@@ -78,12 +85,24 @@ def _indicator_from_payload(payload: dict[str, Any]) -> Indicator:
     value = payload.get("ioc")
     if not isinstance(value, str) or not value.strip():
         raise ConnectorError("ThreatFox response contains an invalid IOC")
+    indicator_type = _THREATFOX_TYPES.get(
+        payload.get("ioc_type"), IndicatorType.UNKNOWN
+    )
+    if payload.get("ioc_type") == "ip:port":
+        host, separator, port = value.rpartition(":")
+        if not separator or not port.isdigit() or not 1 <= int(port) <= 65535:
+            raise ConnectorError("ThreatFox returned an invalid IP:port")
+        try:
+            address = ip_address(host.strip("[]"))
+        except ValueError as exc:
+            raise ConnectorError("ThreatFox returned an invalid IP address") from exc
+        value = str(address)
+        indicator_type = (
+            IndicatorType.IPV4 if address.version == 4 else IndicatorType.IPV6
+        )
     return Indicator(
         value=value,
-        indicator_type=_THREATFOX_TYPES.get(
-            payload.get("ioc_type"),
-            IndicatorType.UNKNOWN,
-        ),
+        indicator_type=indicator_type,
         source=IntelligenceSource.THREATFOX,
         source_id=_as_string(payload.get("id")),
         first_seen=_parse_datetime(payload.get("first_seen")),

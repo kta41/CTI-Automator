@@ -40,7 +40,11 @@ def test_otx_client_normalizes_pulse_indicators() -> None:
                         "id": "pulse-1",
                         "name": "Example pulse",
                         "indicators": [
-                            {"id": "indicator-1", "indicator": "evil.test", "type": "domain"}
+                            {
+                                "id": "indicator-1",
+                                "indicator": "evil.test",
+                                "type": "domain",
+                            }
                         ],
                     }
                 ]
@@ -90,7 +94,7 @@ def test_connector_requires_credentials_before_network_call() -> None:
     session = FakeSession(FakeResponse({}))
 
     with pytest.raises(ValueError, match="OTX_API_KEY"):
-        OTXClient(Settings(), session=session) .get_pulses()
+        OTXClient(Settings(), session=session).get_pulses()
     assert not session.calls
 
 
@@ -103,3 +107,55 @@ def test_http_errors_are_domain_errors() -> None:
 
     with pytest.raises(ConnectorError, match="failed"):
         client.get_pulses()
+
+
+@pytest.mark.parametrize(
+    "value,expected,kind",
+    [
+        ("8.8.8.8:443", "8.8.8.8", IndicatorType.IPV4),
+        ("[2001:4860:4860::8888]:443", "2001:4860:4860::8888", IndicatorType.IPV6),
+    ],
+)
+def test_threatfox_ip_ports_export_as_valid_addresses(value, expected, kind):
+    result = ThreatFoxClient._parse_result(
+        {
+            "query_status": "ok",
+            "data": [{"ioc": value, "ioc_type": "ip:port"}],
+        }
+    )
+    assert result.indicators[0].value == expected
+    assert result.indicators[0].indicator_type == kind
+    assert result.indicators[0].raw_data["ioc"] == value
+
+
+def test_threatfox_no_result_and_rejected_queries_differ():
+    assert (
+        ThreatFoxClient._parse_result(
+            {"query_status": "no_result", "data": None}
+        ).indicators
+        == ()
+    )
+    with pytest.raises(ConnectorError, match="rejected"):
+        ThreatFoxClient._parse_result({"query_status": "illegal_days", "data": []})
+
+
+def test_otx_pagination_fetches_all_pages_and_rejects_cross_origin():
+    from unittest.mock import Mock
+
+    session = Mock(spec=requests.Session)
+    session.request.side_effect = [
+        FakeResponse(
+            {
+                "results": [{"id": "one", "name": "first"}],
+                "next": "https://otx.alienvault.com/api/v1/pulses/subscribed?page=2",
+            }
+        ),
+        FakeResponse({"results": [{"id": "two", "name": "second"}], "next": None}),
+    ]
+    result = OTXClient(Settings(otx_api_key="secret"), session=session).get_pulses()
+    assert [pulse.id for pulse in result] == ["one", "two"]
+    session.request.side_effect = [
+        FakeResponse({"results": [], "next": "https://attacker.example/"})
+    ]
+    with pytest.raises(ConnectorError, match="pagination"):
+        OTXClient(Settings(otx_api_key="secret"), session=session).get_pulses()

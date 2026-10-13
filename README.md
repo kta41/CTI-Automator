@@ -195,7 +195,10 @@ Run the FastMCP server over the default transport to expose tools to local AI ag
 cti-automator mcp
 cti-automator mcp --transport streamable-http
 ```
-The MCP server exposes `analyze_pdf`, `export_pdf_to_stix`, `export_pdf_to_opencti`, `get_otx_pulses`, and `get_threatfox_iocs`. Tools accept file paths and validated arguments.
+The MCP server exposes `analyze_pdf`, `export_pdf_to_stix`, `export_pdf_to_opencti`,
+`get_otx_pulses`, `get_threatfox_iocs`, `enrich_indicators`, `push_to_opencti`,
+and `ingest_repositories`. Tools accept validated arguments. Existing API tools
+accept `opencti=true` and optional `enrich=["virustotal", "shodan"]`.
 </details>
 
 ---
@@ -279,15 +282,148 @@ kubectl -n cti-automator logs job/cti-ingest-check
 ```
 
 The CronJob runs every 30 minutes, forbids overlapping runs and bounds each Job
-to 15 minutes. It fetches OTX followed by ThreatFox using the existing CLI and
-writes results to pod logs; it does **not** persist them or import them into
-OpenCTI. If OTX fails, the Job fails without querying ThreatFox. Logs may contain
-IoCs and source content; restrict access and configure retention. Importing API
-results into OpenCTI requires a separate ingestion/export feature.
+to 15 minutes. It imports OTX followed by ThreatFox into OpenCTI with
+`--opencti`, then analyzes/imports configured repository reports. Import mode
+writes only counts to stdout, not IoCs. OpenCTI credentials are therefore
+required. If a source fails, the Job fails explicitly and remaining sources
+are not queried. STIX indicator, ATT&CK and relationship IDs are deterministic
+so retries reuse object identities; actual merge behavior still depends on
+the OpenCTI server version and permissions. Indicators without a source time
+use the Unix epoch rather than inventing a new observation time on each run.
+Unsupported indicator types fail export rather than being silently dropped.
+
+Existing fetch-only behavior is preserved without `--opencti`:
+
+```bash
+cti-automator ingest-otx --opencti
+cti-automator ingest-threatfox --days 7 --opencti
+cti-automator ingest-otx                         # JSON, no OpenCTI import
+```
+
+OTX pagination is bounded to 100 pages; ThreatFox accepts 1–7 days and normalizes
+`ip:port` to an IP observable, retaining the original port in source metadata.
+The container includes the system `libmagic` dependency required by `pycti`.
+The exporter requires pycti 6.9.29+ for its validated JSON import/result contract
+and reports rejected or omitted objects as errors, not partial successes.
+For non-container installations, install the equivalent OS libmagic package
+(on Debian: `sudo apt-get install libmagic1`).
 
 Use `kubectl -n cti-automator describe pod <pod>` and
 `kubectl -n cti-automator get events --sort-by=.metadata.creationTimestamp`
 to diagnose image pull, Secret, configuration and probe failures.
+
+## Optional enrichment (Phase 7)
+
+Enrichment is disabled by default. Using `--enrich` or MCP's provider parameter
+explicitly authorizes sending the selected public IoC values to those providers.
+Set `VIRUSTOTAL_API_KEY` and/or `SHODAN_API_KEY` as protected environment/Secret
+values; they are not part of the ConfigMap.
+
+```bash
+cti-automator ingest-threatfox --enrich virustotal --opencti
+cti-automator export-pdf report.pdf --enrich virustotal --stix-output report.json
+```
+
+VirusTotal supports public IPs, domains and valid MD5/SHA-1/SHA-256 hashes.
+Shodan supports IPs only; when both providers are selected, non-IP indicators
+go only to VirusTotal. Email addresses, URLs (which can contain PII), private,
+loopback and reserved IPs, invalid hashes and internal domains are rejected
+**before any network request in the batch**. Configure
+`CTI_RESTRICTED_DOMAINS=corp.example,private.example` to block public corporate
+domains too. This is a conservative query policy, not the future full DLP module.
+Mixed source batches can contain disallowed values: an explicit enrichment
+request then fails the whole batch rather than silently excluding indicators.
+Use MCP's `enrich_indicators` with a reviewed public subset when needed.
+
+Results preserve provider, retrieval time, result status, confidence and
+reference URL; STIX/OpenCTI external references preserve that provenance.
+Source confidence is not overwritten by provider scoring.
+`CTI_ENRICHMENT_CACHE_TTL` defaults to 3600 seconds; `CTI_ENRICHMENT_RPM` defaults
+to 4 requests per provider per minute. The cache is bounded to 1000 entries,
+deduplicates queries, and is local to each process (not a cluster-wide quota).
+Local budget exhaustion and HTTP 429 raise explicit `QuotaError`; there are no
+unbounded retries or silent success fallbacks. HTTP 404 is a cached `not-found`.
+The CronJob does not enable enrichment automatically.
+
+## Authorized repository reports (Phase 8)
+
+Telegram ingestion is intentionally deferred. Repository ingestion uses the
+GitHub REST API and is restricted to an explicit comma-separated
+`CTI_REPOSITORY_ALLOWLIST=owner/repo,another/repo`. `GITHUB_TOKEN` is optional
+for public repositories and required for private repositories; use read-only
+repository-content permissions. Credentials are never stored in checkpoints.
+
+```bash
+export CTI_REPOSITORY_ALLOWLIST=owner/reports
+export CTI_REPOSITORY_CHECKPOINT="$HOME/.local/state/cti-automator/repositories.json"
+cti-automator ingest-repositories --opencti
+```
+
+Only regular UTF-8 `.md`, `.txt` and `.rst` files under `reports/`, `docs/`,
+or named `README.md` are accepted. Samples, archives, symlinks and executable
+content are not downloaded or executed. A commit snapshot is pinned before
+fetching, and Git blob integrity is checked. Defaults: 20 changed documents per
+repository/run, 100000 bytes/document, 2 MB/API response. Remaining changed
+documents are picked up on subsequent executions. Recursive tree responses
+marked truncated fail explicitly rather than reporting partial success.
+
+Documents retain repository, commit, path, digest, source URL and retrieval
+time. Text is passed to the validated analysis pipeline as untrusted evidence.
+With the default Ollama provider it stays local; selecting a hosted AI provider
+explicitly configures remote text processing.
+
+Atomic checkpoints are advanced **after** analysis and optional OpenCTI delivery
+succeed; validated analyses are also written with owner-only permissions into
+the checkpoint's sibling `.results/` directory before advancing state. Results
+therefore survive a later failure or a failed CLI output write. Restrict access
+and retention of these files, which contain intelligence data. Completed
+documents survive later failures and retries. Fetching a
+document does not itself import it. Cross-process file locking rejects
+concurrent repository ingestion instead of corrupting state. The shared
+`cti-automator-state` PVC persists state for CLI Jobs and MCP. Its `ReadWriteOnce`
+access mode suits a single-node K3s; multi-node deployments need compatible
+storage/scheduling or a separate checkpoint store. The CronJob enables this
+source only when its allowlist is non-empty.
+
+## Operational observability (Phase 9)
+
+Operational events are JSON on **stderr**, leaving CLI JSON/STIX stdout and
+MCP stdio intact. `CTI_LOG_LEVEL` controls verbosity. FastMCP 2.14.7+ is required
+for the verified runtime contract. MCP errors are masked, framework tracebacks
+and HTTP access logs are suppressed, and server banners are disabled.
+Each MCP invocation gets a fresh run UUID even within a long-lived CLI server.
+Nested operations share a
+run UUID; events contain operation, start/end/error, duration, processed count
+where available, and exception category. They deliberately omit arguments,
+IoCs, report text, tokens and exception messages. Root-logger third-party events
+are also formatted without their messages, metadata or tracebacks. Libraries
+with independent handlers/banners can still emit separate diagnostics; restrict
+access and retention of all pod logs.
+
+`/metrics` exposes Prometheus counters for operations/outcomes, processed items
+and quota failures, plus latency histograms with a fixed operation-label set.
+It is distinct from `/healthz`; neither endpoint checks business credentials.
+Counters are process-local: MCP operations are scraped, while short-lived CLI
+Jobs emit JSON events but are not scraped by this static MCP target. Aggregate
+Job events in your log backend; no cluster-wide Job metric totals are claimed.
+
+Optional native Kubernetes monitoring, without Prometheus Operator CRDs:
+
+```bash
+kubectl apply -f monitoring/
+kubectl -n cti-automator rollout status deployment/cti-prometheus
+kubectl -n cti-automator port-forward service/cti-prometheus 9090:9090
+```
+
+The supplied Prometheus config scrapes the MCP Service and evaluates availability,
+error ratio (>20%), quota exhaustion and p95 latency (>120 seconds) alerts.
+Edit the ConfigMap thresholds and durations for your environment, then restart
+Prometheus to reload. Retention is 7 days/800 MB with ephemeral storage; replace
+the data `emptyDir` with a PVC for durable history. Alert rules are evaluated
+locally; configure your Alertmanager separately to deliver notifications.
+Import `cti-automator.json` from `monitoring/03-dashboard.yaml` into Grafana or
+enable its ConfigMap dashboard sidecar, then select the Prometheus datasource.
+All monitoring Services remain internal.
 
 ## 🚀 Creating a Release
 

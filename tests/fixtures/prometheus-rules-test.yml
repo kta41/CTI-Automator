@@ -1,0 +1,72 @@
+rule_files:
+  - /etc/prometheus/rules.yml
+evaluation_interval: 1m
+tests:
+  - interval: 1m
+    input_series:
+      - series: 'up{job="cti-automator",instance="test"}'
+        values: "0+0x10"
+      - series: 'cti_operations_total{operation="otx",outcome="error"}'
+        values: "0+10x10"
+      - series: 'cti_operations_total{operation="otx",outcome="success"}'
+        values: "0+10x10"
+      - series: 'cti_quota_errors_total{operation="enrichment"}'
+        values: "0+1x10"
+      - series: 'cti_operation_seconds_bucket{operation="analysis",le="120"}'
+        values: "0+0x10"
+      - series: 'cti_operation_seconds_bucket{operation="analysis",le="240"}'
+        values: "0+100x10"
+      - series: 'cti_operation_seconds_bucket{operation="analysis",le="+Inf"}'
+        values: "0+100x10"
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: CTIMCPUnavailable
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              job: cti-automator
+              instance: test
+            exp_annotations:
+              summary: CTI MCP metrics endpoint is unavailable
+      - eval_time: 10m
+        alertname: CTIOperationErrors
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+            exp_annotations:
+              summary: More than 20 percent of CTI operations are failing
+      - eval_time: 10m
+        alertname: CTIQuotaExceeded
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+            exp_annotations:
+              summary: External enrichment quota was exhausted
+      - eval_time: 10m
+        alertname: CTISlowOperations
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              operation: analysis
+            exp_annotations:
+              summary: CTI operation p95 latency exceeds 120 seconds
+  - interval: 1m
+    input_series:
+      - series: 'up{job="cti-automator",instance="test"}'
+        values: "1+0x10"
+      - series: 'cti_operations_total{operation="otx",outcome="error"}'
+        values: "0+1x10"
+      - series: 'cti_operations_total{operation="otx",outcome="success"}'
+        values: "0+99x10"
+      - series: 'cti_quota_errors_total{operation="enrichment"}'
+        values: "0+0x10"
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: CTIMCPUnavailable
+        exp_alerts: []
+      - eval_time: 10m
+        alertname: CTIOperationErrors
+        exp_alerts: []
+      - eval_time: 10m
+        alertname: CTIQuotaExceeded
+        exp_alerts: []

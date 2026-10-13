@@ -32,8 +32,11 @@ spec:
               command: ["/bin/sh", "-c"]
               args:
                 - >-
-                  cti-automator ingest-otx &&
-                  cti-automator ingest-threatfox
+                  cti-automator ingest-otx --opencti &&
+                  cti-automator ingest-threatfox --opencti &&
+                  if [ -n "$CTI_REPOSITORY_ALLOWLIST" ]; then
+                    cti-automator ingest-repositories --opencti;
+                  fi
               envFrom:
                 - configMapRef:
                     name: cti-automator-config
@@ -47,6 +50,8 @@ spec:
               volumeMounts:
                 - name: tmp
                   mountPath: /tmp
+                - name: state
+                  mountPath: /state
               resources:
                 requests:
                   cpu: 50m
@@ -58,3 +63,6 @@ spec:
             - name: tmp
               emptyDir:
                 sizeLimit: 128Mi
+            - name: state
+              persistentVolumeClaim:
+                claimName: cti-automator-state

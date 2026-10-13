@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from enum import StrEnum
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -29,6 +29,20 @@ class IntelligenceSource(StrEnum):
     OTX = "alienvault-otx"
     THREATFOX = "abusech-threatfox"
     PDF_REPORT = "pdf-report"
+    REPOSITORY = "repository-report"
+
+
+class EnrichmentResult(BaseModel):
+    """Bounded provider metadata; never contains a raw remote response."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    provider: Literal["virustotal", "shodan"]
+    retrieved_at: datetime
+    status: Literal["found", "not-found"]
+    reference_url: str
+    confidence: int | None = Field(default=None, ge=0, le=100)
+    tags: tuple[str, ...] = ()
 
 
 class Indicator(BaseModel):
@@ -45,6 +59,7 @@ class Indicator(BaseModel):
     confidence: int | None = Field(default=None, ge=0, le=100)
     tags: tuple[str, ...] = ()
     raw_data: dict[str, Any] = Field(default_factory=dict)
+    enrichments: tuple[EnrichmentResult, ...] = ()
 
     @field_validator("value")
     @classmethod
