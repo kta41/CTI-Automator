@@ -6,7 +6,11 @@ import pytest
 from cti_automator.analyzer import PDFAnalyzer, build_analysis_prompt
 from cti_automator.config import Settings
 from cti_automator.exceptions import DocumentExtractionError, LLMResponseError
-from cti_automator.llm import OllamaClient
+from cti_automator.llm import (
+    OllamaClient,
+    OpenAICompatibleClient,
+    create_llm_client,
+)
 from cti_automator.models import PDFAnalysis
 from cti_automator.parsers.pdf import PDFTextExtractor
 
@@ -64,6 +68,44 @@ def test_ollama_client_rejects_invalid_generated_json() -> None:
 
     with pytest.raises(LLMResponseError, match="invalid JSON"):
         client.generate_json("Analyze this.")
+
+
+def test_openai_compatible_client_supports_groq_style_response() -> None:
+    session = FakeSession(
+        FakeResponse(
+            {
+                "choices": [
+                    {
+                        "message": {
+                            "content": '{"summary": "ok", "indicators": [], "ttps": []}'
+                        }
+                    }
+                ]
+            }
+        )
+    )
+    settings = Settings(
+        ai_provider="groq",
+        ai_api_key="secret",
+        ai_base_url="https://api.groq.com/openai/v1",
+        ai_model="llama-3.3-70b-versatile",
+    )
+    client = OpenAICompatibleClient(settings, session=session)  # type: ignore[arg-type]
+
+    result = client.generate_json("Analyze this.")
+
+    assert result["summary"] == "ok"
+    assert session.calls[0]["url"].endswith("/chat/completions")
+    assert session.calls[0]["headers"]["Authorization"] == "Bearer secret"
+    assert session.calls[0]["json"]["model"] == "llama-3.3-70b-versatile"
+
+
+def test_factory_selects_hosted_provider() -> None:
+    client = create_llm_client(
+        Settings(ai_provider="openai", ai_api_key="secret")
+    )
+
+    assert isinstance(client, OpenAICompatibleClient)
 
 
 def test_analyzer_validates_structured_result() -> None:

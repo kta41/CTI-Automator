@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 
 from cti_automator.config import Settings
-from cti_automator.llm import OllamaClient
+from cti_automator.llm import LLMClient, create_llm_client
 from cti_automator.models import PDFAnalysis
 from cti_automator.parsers.pdf import PDFTextExtractor
 
@@ -19,10 +19,10 @@ class PDFAnalyzer:
         settings: Settings,
         *,
         extractor: PDFTextExtractor | None = None,
-        ollama: OllamaClient | None = None,
+        ollama: LLMClient | None = None,
     ) -> None:
         self._extractor = extractor or PDFTextExtractor()
-        self._ollama = ollama or OllamaClient(settings)
+        self._ollama = ollama or create_llm_client(settings)
 
     def analyze(self, path: Path) -> PDFAnalysis:
         """Analyze one PDF without sending data to any remote service."""

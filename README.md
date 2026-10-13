@@ -132,9 +132,31 @@ The semantic analysis layer is local-first:
   confidence, evidence, rationale, and MITRE ATT&CK technique mappings.
 
 Configure `OLLAMA_BASE_URL`, `OLLAMA_MODEL`, `CTI_REQUEST_TIMEOUT`, and
-`CTI_VERIFY_TLS` using `.env.example`. No report content is sent to a remote
-service by this layer. Tests use injected fake clients and do not require an
+`CTI_VERIFY_TLS` using `.env.example`. By default, no report content is sent
+to a remote service. Tests use injected fake clients and do not require an
 Ollama server.
+
+The same analyzer can use hosted providers through the OpenAI Chat
+Completions-compatible adapter. Set `AI_PROVIDER` to `openai` or `groq`,
+provide `AI_API_KEY`, and configure the endpoint and model:
+
+```dotenv
+# OpenAI
+AI_PROVIDER=openai
+AI_API_KEY=your-openai-key
+AI_BASE_URL=https://api.openai.com/v1
+AI_MODEL=gpt-4o-mini
+
+# Or Groq
+AI_PROVIDER=groq
+AI_API_KEY=your-groq-key
+AI_BASE_URL=https://api.groq.com/openai/v1
+AI_MODEL=llama-3.3-70b-versatile
+```
+
+`AI_API_KEY` is never included in logs or model representations. Hosted
+providers require an explicit opt-in through `AI_PROVIDER`; Ollama remains the
+default.
 
 ## 🚀 Creating a release
 
