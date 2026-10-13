@@ -17,10 +17,12 @@ class Settings(BaseModel):
     otx_base_url: str = "https://otx.alienvault.com"
     abusech_api_key: str | None = Field(default=None, repr=False)
     threatfox_base_url: str = "https://threatfox-api.abuse.ch"
+    ollama_base_url: str = "http://localhost:11434"
+    ollama_model: str = "qwen2.5:7b"
     request_timeout: float = Field(default=30.0, gt=0)
     verify_tls: bool = True
 
-    @field_validator("otx_base_url", "threatfox_base_url")
+    @field_validator("otx_base_url", "threatfox_base_url", "ollama_base_url")
     @classmethod
     def validate_base_url(cls, value: str) -> str:
         """Reject malformed connector URLs before making a network request."""
@@ -41,6 +43,8 @@ class Settings(BaseModel):
             "CTI_REQUEST_TIMEOUT": "request_timeout",
             "CTI_VERIFY_TLS": "verify_tls",
             "OPENCTI_VERIFY_TLS": "verify_tls",
+            "OLLAMA_BASE_URL": "ollama_base_url",
+            "OLLAMA_MODEL": "ollama_model",
         }
         for environment_name, field_name in environment_map.items():
             value = os.getenv(environment_name)

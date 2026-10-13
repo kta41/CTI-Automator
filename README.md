@@ -120,6 +120,50 @@ Both connectors enforce data integrity via **Pydantic** models. Network failures
 
 *Note: Credentials must be injected via environment variables (see `.env.example`). To maintain container security standards, the package does not load `.env` files automatically internally.*
 
+## 🧠 Local PDF analysis (Phase 3)
+
+The semantic analysis layer is local-first:
+
+- `PDFTextExtractor` extracts text with `pdfplumber` and rejects missing,
+  unreadable, empty, or non-PDF documents.
+- `OllamaClient` calls the local `/api/generate` endpoint with JSON output
+  enabled and no streaming.
+- `PDFAnalyzer` validates the model response with Pydantic, including IoCs,
+  confidence, evidence, rationale, and MITRE ATT&CK technique mappings.
+
+Configure `OLLAMA_BASE_URL`, `OLLAMA_MODEL`, `CTI_REQUEST_TIMEOUT`, and
+`CTI_VERIFY_TLS` using `.env.example`. No report content is sent to a remote
+service by this layer. Tests use injected fake clients and do not require an
+Ollama server.
+
+## 🚀 Creating a release
+
+The release workflow runs for tags matching `v*`. Before creating one:
+
+```bash
+source .venv/bin/activate
+ruff check src tests
+mypy src
+pytest
+python -m build
+```
+
+Update the project version in `pyproject.toml`, commit the change, and create
+a semantic version tag with the same version:
+
+```bash
+git add pyproject.toml README.md src tests
+git commit -m "Prepare release v0.2.0"
+git push origin main
+git tag -a v0.2.0 -m "Release v0.2.0"
+git push origin v0.2.0
+```
+
+GitHub Actions then installs the package, runs Ruff, mypy and pytest, builds
+the wheel and source archive, and publishes both files in a GitHub Release
+using `softprops/action-gh-release`. The repository token needs `contents:
+write`, already declared in `.github/workflows/release.yml`.
+
 ---
 
 ## 💡 Execution & Usage

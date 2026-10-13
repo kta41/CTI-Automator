@@ -28,6 +28,7 @@ class IntelligenceSource(StrEnum):
 
     OTX = "alienvault-otx"
     THREATFOX = "abusech-threatfox"
+    PDF_REPORT = "pdf-report"
 
 
 class Indicator(BaseModel):
@@ -77,3 +78,26 @@ class ThreatFoxQueryResult(BaseModel):
     query_status: str
     indicators: tuple[Indicator, ...]
 
+
+class TTPMapping(BaseModel):
+    """A justified mapping between report evidence and MITRE ATT&CK."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    technique_id: str = Field(pattern=r"^T\d{4}(?:\.\d{3})?$")
+    technique_name: str = Field(min_length=1)
+    tactic: str = Field(min_length=1)
+    rationale: str = Field(min_length=1)
+    evidence: str = Field(min_length=1)
+    confidence: int = Field(ge=0, le=100)
+
+
+class PDFAnalysis(BaseModel):
+    """Structured result returned by the local semantic analysis stage."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    summary: str = Field(min_length=1)
+    indicators: tuple[Indicator, ...] = ()
+    ttps: tuple[TTPMapping, ...] = ()
+    source_document: str = Field(min_length=1)
