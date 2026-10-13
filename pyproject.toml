@@ -35,6 +35,7 @@ dependencies = [
     "pydantic>=2.7,<3.0",
     "pycti>=6.0,<7.0",
     "requests>=2.32,<3.0",
+    "stix2>=3.0,<4.0",
 ]
 
 [project.optional-dependencies]
@@ -91,10 +92,10 @@ mypy_path = "src"
 module = [
     "pdfplumber",
     "pycti",
+    "stix2",
 ]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 addopts = "-ra"
 testpaths = ["tests"]
-

@@ -23,6 +23,8 @@ class Settings(BaseModel):
     ai_api_key: str | None = Field(default=None, repr=False)
     ai_base_url: str = "https://api.openai.com/v1"
     ai_model: str = "gpt-4o-mini"
+    opencti_url: str | None = None
+    opencti_token: str | None = Field(default=None, repr=False)
     request_timeout: float = Field(default=30.0, gt=0)
     verify_tls: bool = True
 
@@ -31,6 +33,7 @@ class Settings(BaseModel):
         "threatfox_base_url",
         "ollama_base_url",
         "ai_base_url",
+        "opencti_url",
     )
     @classmethod
     def validate_base_url(cls, value: str) -> str:
@@ -67,6 +70,8 @@ class Settings(BaseModel):
             "AI_API_KEY": "ai_api_key",
             "AI_BASE_URL": "ai_base_url",
             "AI_MODEL": "ai_model",
+            "OPENCTI_URL": "opencti_url",
+            "OPENCTI_TOKEN": "opencti_token",
         }
         for environment_name, field_name in environment_map.items():
             value = os.getenv(environment_name)
@@ -91,3 +96,9 @@ class Settings(BaseModel):
         if not self.ai_api_key:
             raise ValueError("AI_API_KEY is required for hosted AI providers")
         return self.ai_api_key
+
+    def require_opencti_credentials(self) -> tuple[str, str]:
+        """Return OpenCTI URL and token or fail before connecting."""
+        if not self.opencti_url or not self.opencti_token:
+            raise ValueError("OPENCTI_URL and OPENCTI_TOKEN are required")
+        return self.opencti_url, self.opencti_token

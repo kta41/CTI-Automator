@@ -15,3 +15,7 @@ class DocumentExtractionError(CTIAutomatorError):
 
 class LLMResponseError(CTIAutomatorError):
     """Raised when Ollama is unavailable or returns invalid structured data."""
+
+
+class ExportError(CTIAutomatorError):
+    """Raised when intelligence cannot be represented or delivered."""

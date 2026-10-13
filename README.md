@@ -158,6 +158,14 @@ AI_MODEL=llama-3.3-70b-versatile
 providers require an explicit opt-in through `AI_PROVIDER`; Ollama remains the
 default.
 
+## 📦 STIX and OpenCTI export (Phase 4)
+
+`STIXExporter` converts validated indicators and ATT&CK mappings into a STIX
+2.1 bundle. `OpenCTIExporter` serializes that bundle and sends it through
+`pycti`. Configure `OPENCTI_URL`, `OPENCTI_TOKEN`, and `OPENCTI_VERIFY_TLS`
+before using the OpenCTI adapter. The exporter accepts injected clients for
+testing and does not connect during module import.
+
 ## 🚀 Creating a release
 
 The release workflow runs for tags matching `v*`. Before creating one:
