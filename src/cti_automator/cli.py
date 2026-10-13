@@ -49,6 +49,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     mcp = subparsers.add_parser("mcp", help="Run the FastMCP server.")
     mcp.add_argument("--transport", choices=("stdio", "sse", "streamable-http"))
+    mcp.add_argument("--host", default=None, help="Network interface for HTTP transports.")
+    mcp.add_argument("--port", type=int, default=None, help="Port for HTTP transports.")
     mcp.set_defaults(handler=_run_mcp)
     return parser
 
@@ -99,5 +101,13 @@ def _ingest_threatfox(args: argparse.Namespace, settings: Settings) -> int:
 def _run_mcp(args: argparse.Namespace, settings: Settings) -> int:
     from cti_automator.mcp_server import create_mcp_server
 
-    create_mcp_server(settings).run(transport=args.transport)
+    server = create_mcp_server(settings)
+    if args.host is None and args.port is None:
+        server.run(transport=args.transport)
+    else:
+        server.run(
+            transport=args.transport,
+            host=args.host,
+            port=args.port,
+        )
     return 0

@@ -1,0 +1,53 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cti-automator
+  labels:
+    app.kubernetes.io/name: cti-automator
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: cti-automator
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: cti-automator
+    spec:
+      serviceAccountName: cti-automator
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: cti-automator
+          image: ghcr.io/kta41/cti-automator:latest
+          imagePullPolicy: IfNotPresent
+          args: ["mcp", "--transport", "streamable-http", "--host", "0.0.0.0", "--port", "8000"]
+          ports:
+            - name: http
+              containerPort: 8000
+          envFrom:
+            - configMapRef:
+                name: cti-automator-config
+            - secretRef:
+                name: cti-automator-secrets
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            readOnlyRootFilesystem: true
+          readinessProbe:
+            tcpSocket:
+              port: http
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: http
+            periodSeconds: 30
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
