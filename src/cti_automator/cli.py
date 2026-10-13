@@ -49,7 +49,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     mcp = subparsers.add_parser("mcp", help="Run the FastMCP server.")
     mcp.add_argument("--transport", choices=("stdio", "sse", "streamable-http"))
-    mcp.add_argument("--host", default=None, help="Network interface for HTTP transports.")
+    mcp.add_argument(
+        "--host", default=None, help="Network interface for HTTP transports."
+    )
     mcp.add_argument("--port", type=int, default=None, help="Port for HTTP transports.")
     mcp.set_defaults(handler=_run_mcp)
     return parser

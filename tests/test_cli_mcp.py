@@ -9,7 +9,15 @@ def test_cli_parser_defines_phase_five_commands() -> None:
     assert parser.parse_args(["analyze-pdf", "report.pdf"]).command == "analyze-pdf"
     assert parser.parse_args(["mcp"]).command == "mcp"
     mcp_args = parser.parse_args(
-        ["mcp", "--transport", "streamable-http", "--host", "0.0.0.0", "--port", "8000"]
+        [
+            "mcp",
+            "--transport",
+            "streamable-http",
+            "--host",
+            "0.0.0.0",
+            "--port",
+            "8000",
+        ]
     )
     assert mcp_args.host == "0.0.0.0"
     assert mcp_args.port == 8000

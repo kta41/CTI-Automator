@@ -2,6 +2,7 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: cti-automator-config
+  namespace: cti-automator
 data:
   OTX_BASE_URL: https://otx.alienvault.com
   THREATFOX_BASE_URL: https://threatfox-api.abuse.ch
