@@ -1,0 +1,95 @@
+name: Container and Kubernetes
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install development dependencies
+        run: python -m pip install ".[dev]"
+      - name: Validate application
+        run: |
+          ruff check src tests
+          mypy src
+          pytest
+      - name: Build image
+        run: docker build -t cti-automator:ci .
+      - name: Create disposable Kubernetes cluster
+        uses: helm/kind-action@v1
+        with:
+          cluster_name: cti-ci
+      - name: Validate native manifests and MCP startup
+        run: |
+          kind load docker-image cti-automator:ci --name cti-ci
+          kubectl apply -f k8s/00-namespace.yaml
+          kubectl apply --dry-run=server -f k8s/
+          kubectl apply -f k8s/01-serviceaccount.yaml -f k8s/02-configmap.yaml -f k8s/03-secret.yaml -f k8s/05-service.yaml
+          kubectl set image --local -f k8s/04-deployment.yaml cti-automator=cti-automator:ci -o yaml | kubectl apply -f -
+          kubectl -n cti-automator rollout status deployment/cti-automator --timeout=180s
+          kubectl -n cti-automator exec deployment/cti-automator -- python -c "import urllib.request; assert urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=10).status == 200"
+          kubectl -n cti-automator exec -i deployment/cti-automator -- python - <<'PY'
+          import asyncio
+          from fastmcp import Client
+
+          async def check():
+              async with Client("http://127.0.0.1:8000/mcp") as client:
+                  await client.ping()
+                  tools = await client.list_tools()
+                  assert {tool.name for tool in tools} == {
+                      "analyze_pdf", "export_pdf_to_opencti", "export_pdf_to_stix",
+                      "get_otx_pulses", "get_threatfox_iocs",
+                  }
+
+          asyncio.run(check())
+          PY
+      - name: Report workload diagnostics
+        if: failure()
+        run: |
+          kubectl -n cti-automator get pods,events
+          kubectl -n cti-automator logs deployment/cti-automator --all-containers=true
+
+  publish:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: validate
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Image metadata
+        id: metadata
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/kta41/cti-automator
+          tags: |
+            type=semver,pattern={{version}}
+            type=raw,value=latest,enable=${{ !contains(github.ref_name, '-') }}
+      - name: Publish validated image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.metadata.outputs.tags }}
+          labels: ${{ steps.metadata.outputs.labels }}

@@ -103,6 +103,13 @@ def _ingest_threatfox(args: argparse.Namespace, settings: Settings) -> int:
 def _run_mcp(args: argparse.Namespace, settings: Settings) -> int:
     from cti_automator.mcp_server import create_mcp_server
 
+    if args.port is not None and not 1 <= args.port <= 65535:
+        raise ValueError("MCP port must be between 1 and 65535")
+    if (args.host is not None or args.port is not None) and args.transport not in {
+        "sse",
+        "streamable-http",
+    }:
+        raise ValueError("--host and --port require an HTTP transport")
     server = create_mcp_server(settings)
     if args.host is None and args.port is None:
         server.run(transport=args.transport)

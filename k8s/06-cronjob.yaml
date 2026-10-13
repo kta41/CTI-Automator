@@ -6,15 +6,25 @@ metadata:
 spec:
   schedule: "*/30 * * * *"
   concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 300
   successfulJobsHistoryLimit: 2
   failedJobsHistoryLimit: 3
   jobTemplate:
     spec:
       backoffLimit: 2
+      activeDeadlineSeconds: 900
       template:
         spec:
           restartPolicy: OnFailure
           serviceAccountName: cti-automator
+          automountServiceAccountToken: false
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 10001
+            runAsGroup: 10001
+            fsGroup: 10001
+            seccompProfile:
+              type: RuntimeDefault
           containers:
             - name: ingest
               image: ghcr.io/kta41/cti-automator:latest
@@ -34,6 +44,9 @@ spec:
                 capabilities:
                   drop: ["ALL"]
                 readOnlyRootFilesystem: true
+              volumeMounts:
+                - name: tmp
+                  mountPath: /tmp
               resources:
                 requests:
                   cpu: 50m
@@ -41,3 +54,7 @@ spec:
                 limits:
                   cpu: 500m
                   memory: 512Mi
+          volumes:
+            - name: tmp
+              emptyDir:
+                sizeLimit: 128Mi

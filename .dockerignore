@@ -9,5 +9,9 @@ __pycache__
 dist
 build
 .env
+.env.*
+!.env.example
+k8s
+deploy
 tests
 roadmap.MD

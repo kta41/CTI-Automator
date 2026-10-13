@@ -6,6 +6,8 @@ from pathlib import Path
 from typing import cast
 
 from fastmcp import FastMCP
+from starlette.requests import Request
+from starlette.responses import JSONResponse
 
 from cti_automator.analyzer import PDFAnalyzer
 from cti_automator.config import Settings
@@ -23,6 +25,11 @@ def create_mcp_server(settings: Settings | None = None) -> FastMCP:
             "Hosted AI use is controlled by the configured provider."
         ),
     )
+
+    @server.custom_route("/healthz", methods=["GET"])
+    async def health(request: Request) -> JSONResponse:
+        """Check server responsiveness without querying external dependencies."""
+        return JSONResponse({"status": "ok"})
 
     @server.tool
     def analyze_pdf(file: str) -> dict[str, object]:
@@ -45,16 +52,16 @@ def create_mcp_server(settings: Settings | None = None) -> FastMCP:
     @server.tool
     def get_otx_pulses(modified_since: str | None = None) -> list[dict[str, object]]:
         """Fetch subscribed AlienVault OTX pulses."""
-        pulses = OTXClient(runtime_settings).get_pulses(
-            modified_since=modified_since
-        )
+        pulses = OTXClient(runtime_settings).get_pulses(modified_since=modified_since)
         return [pulse.model_dump(mode="json") for pulse in pulses]
 
     @server.tool
     def get_threatfox_iocs(days: int = 1) -> dict[str, object]:
         """Fetch recent ThreatFox IOCs."""
-        return ThreatFoxClient(runtime_settings).get_recent_iocs(
-            days=days
-        ).model_dump(mode="json")
+        return (
+            ThreatFoxClient(runtime_settings)
+            .get_recent_iocs(days=days)
+            .model_dump(mode="json")
+        )
 
     return server

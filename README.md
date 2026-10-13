@@ -200,6 +200,95 @@ The MCP server exposes `analyze_pdf`, `export_pdf_to_stix`, `export_pdf_to_openc
 
 ---
 
+## Kubernetes native deployment (Phase 6)
+
+The manifests in `k8s/` are standard Kubernetes YAML for K3s. No Argo CD,
+CRDs or Kustomize are required. The container runs as UID/GID 10001 with a
+read-only root filesystem and a bounded writable `/tmp`.
+
+### Prepare the image
+
+The container workflow builds and validates the image on pull requests and
+`main`. Version tags publish `ghcr.io/kta41/cti-automator:<version>` and
+`latest` for stable releases, after a disposable Kubernetes smoke test passes.
+Make the GHCR package public or configure an `imagePullSecret` for a private
+package. For production, set the same immutable version or digest in both
+`k8s/04-deployment.yaml` and `k8s/06-cronjob.yaml`; the default `latest` is
+only a bootstrap reference, not a guarantee that an image is already published.
+
+For local testing on a single K3s node without a registry:
+
+```bash
+docker build -t cti-automator:phase6 .
+docker save cti-automator:phase6 -o /tmp/cti-automator-phase6.tar
+sudo k3s ctr images import /tmp/cti-automator-phase6.tar
+rm /tmp/cti-automator-phase6.tar
+```
+
+Set both workload image references to `cti-automator:phase6` before applying.
+For a multi-node cluster, import on every schedulable node or use a registry.
+
+### Prepare configuration and secrets
+
+Configure `OLLAMA_BASE_URL` in `k8s/02-configmap.yaml` to the actual reachable
+Ollama Service (include its namespace in the DNS name when needed).
+The OpenCTI URL must likewise resolve from the pods, not just from your laptop.
+
+`k8s/03-secret.yaml` is a template. Replace its markers in a protected local
+copy, never commit actual credentials, and keep filesystem permissions restricted.
+Kubernetes Secrets are not encrypted merely because values are base64 encoded:
+restrict RBAC and enable encryption at rest for production.
+Do not reapply the placeholder template over an existing configured Secret.
+The Docker context excludes all Kubernetes manifests and environment files.
+
+```bash
+kubectl apply -f k8s/
+kubectl -n cti-automator rollout status deployment/cti-automator --timeout=180s
+kubectl -n cti-automator get pods,services,cronjobs
+```
+
+Resources are numbered so the namespace is created first. To schema-validate
+without starting workloads on a fresh cluster, create only the namespace and
+then use server-side dry-run:
+
+```bash
+kubectl apply -f k8s/00-namespace.yaml
+kubectl apply --dry-run=server -f k8s/
+```
+
+### Validate MCP and scheduled ingestion
+
+The MCP Service is `ClusterIP`, not a public endpoint. Authentication and
+authorization for remote clients remain pending; do not add a public Ingress or
+LoadBalancer. Only trusted workloads should have network access to it.
+
+```bash
+kubectl -n cti-automator port-forward service/cti-automator 8000:8000
+# In another terminal:
+curl --fail http://127.0.0.1:8000/healthz
+```
+
+`/healthz` reports process responsiveness only; it does not test credentials,
+Ollama, the source APIs or OpenCTI. Streamable HTTP MCP is served at `/mcp`.
+To validate real ingestion after configuring both source API keys:
+
+```bash
+kubectl -n cti-automator create job --from=cronjob/cti-automator-ingest cti-ingest-check
+kubectl -n cti-automator wait --for=condition=complete job/cti-ingest-check --timeout=900s
+kubectl -n cti-automator logs job/cti-ingest-check
+```
+
+The CronJob runs every 30 minutes, forbids overlapping runs and bounds each Job
+to 15 minutes. It fetches OTX followed by ThreatFox using the existing CLI and
+writes results to pod logs; it does **not** persist them or import them into
+OpenCTI. If OTX fails, the Job fails without querying ThreatFox. Logs may contain
+IoCs and source content; restrict access and configure retention. Importing API
+results into OpenCTI requires a separate ingestion/export feature.
+
+Use `kubectl -n cti-automator describe pod <pod>` and
+`kubectl -n cti-automator get events --sort-by=.metadata.creationTimestamp`
+to diagnose image pull, Secret, configuration and probe failures.
+
 ## 🚀 Creating a Release
 
 The release workflow runs for tags matching `v*`. Before creating one:
