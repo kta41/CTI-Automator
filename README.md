@@ -4,7 +4,7 @@
 
 ### Private OSINT Ingestion and OpenCTI Automation Pipeline
 
-[![Status](https://img.shields.io/badge/Status-Development-success?style=for-the-badge&logo=statuspage&logoColor=white)](https://github.com/kta41/CTI-Automator)
+[![Status](https://img.shields.io/badge/Status-Production--Ready-success?style=for-the-badge&logo=statuspage&logoColor=white)](https://github.com/kta41/CTI-Automator)
 [![Python](https://img.shields.io/badge/Python-3.11+-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
 [![OpenCTI](https://img.shields.io/badge/OpenCTI-Integration-003B5C?style=for-the-badge&logo=graphql&logoColor=white)](https://www.opencti.io/)
 [![AI](https://img.shields.io/badge/Local_AI-Ollama-white?style=for-the-badge&logo=ollama&logoColor=black)](https://ollama.com/)
@@ -87,6 +87,51 @@ This repository is ready for distribution. The GitHub Actions pipeline will auto
 
 ---
 
+## 📡 OSINT Connectors & Ingestion
+
+The deterministic ingestion layer is strict and modular. It currently exposes two main clients for continuous OSINT gathering:
+
+- `cti_automator.connectors.OTXClient`: Pulls subscribed pulses from AlienVault OTX.
+- `cti_automator.connectors.ThreatFoxClient`: Queries Abuse.ch ThreatFox for active malware infrastructure.
+
+**Under the hood:** Both connectors enforce data integrity via **Pydantic** models. Network failures or malformed upstream API responses are trapped and normalized into a standard `ConnectorError`. 
+
+---
+
+## 🧠 AI-Powered PDF Analysis
+
+The semantic analysis layer is local-first, ensuring sensitive data never leaves your environment:
+
+- `PDFTextExtractor` extracts text with `pdfplumber` and rejects missing, unreadable, empty, or non-PDF documents.
+- `OllamaClient` calls the local `/api/generate` endpoint with JSON output enabled and no streaming.
+- `PDFAnalyzer` validates the model response with Pydantic, including IoCs, confidence, evidence, rationale, and MITRE ATT&CK technique mappings.
+
+By default, no report content is sent to a remote service. Configure `OLLAMA_BASE_URL`, `OLLAMA_MODEL`, `CTI_REQUEST_TIMEOUT`, and `CTI_VERIFY_TLS` using `.env.example`.
+
+*(Optional)* The analyzer can use hosted providers through an OpenAI Chat Completions-compatible adapter. Set `AI_PROVIDER` to `openai` or `groq`, provide `AI_API_KEY`, and configure the endpoint and model:
+
+```dotenv
+# OpenAI Configuration
+AI_PROVIDER=openai
+AI_API_KEY=your-openai-key
+AI_BASE_URL=[https://api.openai.com/v1](https://api.openai.com/v1)
+AI_MODEL=gpt-4o-mini
+```
+
+`AI_API_KEY` is never included in logs or model representations. Hosted providers require explicit opt-in; Ollama remains the privacy-preserving default.
+
+---
+
+## 📦 STIX 2.1 and OpenCTI Export
+
+The platform abstracts complex CTI data structures into standard formats:
+- `STIXExporter` converts validated indicators and ATT&CK mappings into a standard STIX 2.1 bundle. 
+- `OpenCTIExporter` serializes that bundle and pushes it through `pycti`. 
+
+Configure `OPENCTI_URL`, `OPENCTI_TOKEN`, and `OPENCTI_VERIFY_TLS` before using the adapter.
+
+---
+
 ## ⚙️ Configuration & Development
 
 Built with strict typing and modern DevSecOps tools, the local environment is set up as follows:
@@ -108,90 +153,54 @@ pytest                # Test suite
 
 ---
 
-## 📡 Operational Connectors (Phase 2)
+## 💡 Execution & Usage
 
-The deterministic ingestion layer is strict and modular. It currently exposes two main clients for continuous OSINT gathering:
+<details open>
+<summary><b>1. Credentials Configuration</b></summary>
 
-- `cti_automator.connectors.OTXClient`: Pulls subscribed pulses from AlienVault OTX.
-- `cti_automator.connectors.ThreatFoxClient`: Queries Abuse.ch ThreatFox for active malware infrastructure.
-
-**Under the hood:**
-Both connectors enforce data integrity via **Pydantic** models. Network failures or malformed upstream API responses are trapped and normalized into a standard `ConnectorError`. 
-
-*Note: Credentials must be injected via environment variables (see `.env.example`). To maintain container security standards, the package does not load `.env` files automatically internally.*
-
-## 🧠 Local PDF analysis (Phase 3)
-
-The semantic analysis layer is local-first:
-
-- `PDFTextExtractor` extracts text with `pdfplumber` and rejects missing,
-  unreadable, empty, or non-PDF documents.
-- `OllamaClient` calls the local `/api/generate` endpoint with JSON output
-  enabled and no streaming.
-- `PDFAnalyzer` validates the model response with Pydantic, including IoCs,
-  confidence, evidence, rationale, and MITRE ATT&CK technique mappings.
-
-Configure `OLLAMA_BASE_URL`, `OLLAMA_MODEL`, `CTI_REQUEST_TIMEOUT`, and
-`CTI_VERIFY_TLS` using `.env.example`. By default, no report content is sent
-to a remote service. Tests use injected fake clients and do not require an
-Ollama server.
-
-The same analyzer can use hosted providers through the OpenAI Chat
-Completions-compatible adapter. Set `AI_PROVIDER` to `openai` or `groq`,
-provide `AI_API_KEY`, and configure the endpoint and model:
-
-```dotenv
-# OpenAI
-AI_PROVIDER=openai
-AI_API_KEY=your-openai-key
-AI_BASE_URL=https://api.openai.com/v1
-AI_MODEL=gpt-4o-mini
-
-# Or Groq
-AI_PROVIDER=groq
-AI_API_KEY=your-groq-key
-AI_BASE_URL=https://api.groq.com/openai/v1
-AI_MODEL=llama-3.3-70b-versatile
+Copy the environment template and insert your OpenCTI and source tokens:
+```bash
+cp .env.example .env
+nano .env
 ```
+Ensure variables are loaded before running the tool (e.g., `set -a; source .env; set +a`). *Note: To maintain container security standards, the package does not load `.env` files automatically internally.*
+</details>
 
-`AI_API_KEY` is never included in logs or model representations. Hosted
-providers require an explicit opt-in through `AI_PROVIDER`; Ollama remains the
-default.
+<details open>
+<summary><b>2. Command Line Interface (CLI)</b></summary>
 
-## 📦 STIX and OpenCTI export (Phase 4)
-
-`STIXExporter` converts validated indicators and ATT&CK mappings into a STIX
-2.1 bundle. `OpenCTIExporter` serializes that bundle and sends it through
-`pycti`. Configure `OPENCTI_URL`, `OPENCTI_TOKEN`, and `OPENCTI_VERIFY_TLS`
-before using the OpenCTI adapter. The exporter accepts injected clients for
-testing and does not connect during module import.
-
-## 🖥️ CLI and MCP (Phase 5)
-
-The installed package exposes the `cti-automator` command:
+The installed package exposes the `cti-automator` globally:
 
 ```bash
+# General help
 cti-automator --help
+
+# API Ingestion
+cti-automator ingest-otx --modified-since 2026-01-01
+cti-automator ingest-threatfox --days 1
+
+# PDF Semantic Analysis & Export
 cti-automator analyze-pdf report.pdf
 cti-automator export-pdf report.pdf --stix-output report.bundle.json
 cti-automator export-pdf report.pdf --opencti
-cti-automator ingest-otx --modified-since 2026-01-01
-cti-automator ingest-threatfox --days 1
 ```
+</details>
 
-Run the FastMCP server over the default transport:
+<details open>
+<summary><b>3. MCP Server Orchestration</b></summary>
+
+Run the FastMCP server over the default transport to expose tools to local AI agents:
 
 ```bash
 cti-automator mcp
 cti-automator mcp --transport streamable-http
 ```
+The MCP server exposes `analyze_pdf`, `export_pdf_to_stix`, `export_pdf_to_opencti`, `get_otx_pulses`, and `get_threatfox_iocs`. Tools accept file paths and validated arguments.
+</details>
 
-The MCP server exposes `analyze_pdf`, `export_pdf_to_stix`,
-`export_pdf_to_opencti`, `get_otx_pulses`, and `get_threatfox_iocs`. Tools
-accept file paths and validated arguments; credentials are read from the
-environment at server startup.
+---
 
-## 🚀 Creating a release
+## 🚀 Creating a Release
 
 The release workflow runs for tags matching `v*`. Before creating one:
 
@@ -203,8 +212,7 @@ pytest
 python -m build
 ```
 
-Update the project version in `pyproject.toml`, commit the change, and create
-a semantic version tag with the same version:
+Update the project version in `pyproject.toml`, commit the change, and create a semantic version tag:
 
 ```bash
 git add pyproject.toml README.md src tests
@@ -214,40 +222,7 @@ git tag -a v0.2.0 -m "Release v0.2.0"
 git push origin v0.2.0
 ```
 
-GitHub Actions then installs the package, runs Ruff, mypy and pytest, builds
-the wheel and source archive, and publishes both files in a GitHub Release
-using `softprops/action-gh-release`. The repository token needs `contents:
-write`, already declared in `.github/workflows/release.yml`.
-
----
-
-## 💡 Execution & Usage
-
-<details>
-<summary><b>1. CLI Execution</b></summary>
-
-Once installed, the tool is globally registered and can be executed from the terminal:
-
-```bash
-# Ingest from an API and export to STIX JSON
-cti-automator ingest --source otx --export stix
-
-# Parse a PDF report using the AI agent
-cti-automator parse --file report.pdf --model qwen --export opencti
-```
-</details>
-
-<details>
-<summary><b>2. Credentials Configuration</b></summary>
-
-Copy the environment template and insert your OpenCTI and source tokens:
-
-```bash
-cp .env.example .env
-nano .env
-```
-Make sure to export the variables before running the tool: `set -a; source .env; set +a`.
-</details>
+GitHub Actions automatically installs the package, runs validation, builds the wheel and source archive, and publishes both files in a GitHub Release using `softprops/action-gh-release`.
 
 ---
 
