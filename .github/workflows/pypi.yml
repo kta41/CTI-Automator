@@ -1,0 +1,133 @@
+name: Publish Python distribution
+
+# Manual, authorized publication through PyPI Trusted Publishing (OIDC).
+# Rehearse on TestPyPI first; production PyPI requires a protected environment.
+
+on:
+  workflow_dispatch:
+    inputs:
+      repository:
+        description: Target package index
+        required: true
+        default: testpypi
+        type: choice
+        options:
+          - testpypi
+          - pypi
+      version:
+        description: pyproject version being published (required when dispatched from a branch)
+        required: false
+        default: ""
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Validate, build and attest
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install package and development dependencies
+        run: python -m pip install --upgrade pip && python -m pip install ".[dev]"
+
+      - name: Lint
+        run: ruff check .
+
+      - name: Type-check
+        run: mypy src
+
+      - name: Run tests
+        run: pytest
+
+      - name: Verify tag matches project version
+        run: |
+          python - <<'PY'
+          import os
+          import sys
+          import tomllib
+
+          ref = os.environ["GITHUB_REF"]
+          version = tomllib.loads(
+              open("pyproject.toml", encoding="utf-8").read()
+          )["project"]["version"]
+          dispatched = os.environ.get("VERSION_INPUT", "")
+          if ref.startswith("refs/tags/"):
+              if not ref.endswith(f"/v{version}"):
+                  print(f"ref {ref} does not match pyproject version {version}")
+                  sys.exit(1)
+          elif dispatched != version:
+              print(
+                  "branch dispatch requires workflow input "
+                  f"version={version!r}, got {dispatched!r}"
+              )
+              sys.exit(1)
+          PY
+        env:
+          VERSION_INPUT: ${{ inputs.version }}
+
+      - name: Build distribution
+        run: python -m build
+
+      - name: Check distribution metadata and secret hygiene
+        run: |
+          python - <<'PY'
+          import tarfile
+          import zipfile
+          from pathlib import Path
+
+          dist = Path("dist")
+          wheels = list(dist.glob("*.whl"))
+          sdists = list(dist.glob("*.tar.gz"))
+          assert wheels and sdists, "missing wheel or sdist"
+          forbidden = {".env", "k8s/03-secret.yaml"}
+          with tarfile.open(sdists[0]) as archive:
+              names = set(archive.getnames())
+          with zipfile.ZipFile(wheels[0]) as archive:
+              names |= set(archive.namelist())
+          leaked = [name for name in forbidden if any(name in item for item in names)]
+          assert not leaked, f"forbidden files packaged: {leaked}"
+          print("distribution hygiene OK")
+          PY
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: |
+            dist/*.whl
+            dist/*.tar.gz
+
+      - name: Upload distribution artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  publish:
+    name: Publish via Trusted Publishing
+    needs: build
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.repository == 'pypi' && 'pypi' || 'testpypi' }}
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - name: Download distribution artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - name: Publish to ${{ inputs.repository }}
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: ${{ inputs.repository == 'pypi' && 'https://upload.pypi.org/legacy/' || 'https://test.pypi.org/legacy/' }}

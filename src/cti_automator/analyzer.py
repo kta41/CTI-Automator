@@ -10,6 +10,7 @@ from cti_automator.llm import LLMClient, create_llm_client
 from cti_automator.models import PDFAnalysis
 from cti_automator.observability import observe
 from cti_automator.parsers.pdf import PDFTextExtractor
+from cti_automator.sanitizer import Sanitizer
 
 
 class PDFAnalyzer:
@@ -21,9 +22,11 @@ class PDFAnalyzer:
         *,
         extractor: PDFTextExtractor | None = None,
         ollama: LLMClient | None = None,
+        sanitizer: Sanitizer | None = None,
     ) -> None:
         self._extractor = extractor or PDFTextExtractor()
         self._ollama = ollama or create_llm_client(settings)
+        self._sanitizer = sanitizer or Sanitizer.from_settings(settings)
 
     def analyze(self, path: Path) -> PDFAnalysis:
         """Analyze one PDF without sending data to any remote service."""
@@ -35,7 +38,8 @@ class PDFAnalyzer:
         """Analyze bounded report text while treating its content as untrusted data."""
         if not text.strip():
             raise ValueError("report text cannot be empty")
-        prompt = build_analysis_prompt(text, document_name)
+        sanitized = self._sanitizer.sanitize(text)
+        prompt = build_analysis_prompt(sanitized.text, document_name)
         result = self._ollama.generate_json(prompt)
         result["source_document"] = document_name
         return PDFAnalysis.model_validate(result)

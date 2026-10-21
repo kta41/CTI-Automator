@@ -11,11 +11,25 @@ from pathlib import Path
 from cti_automator.analyzer import PDFAnalyzer
 from cti_automator.config import Settings
 from cti_automator.connectors import OTXClient, ThreatFoxClient
+from cti_automator.detections import (
+    FileDetectionExporter,
+    GitHubPullRequestExporter,
+    generate_sigma_rules,
+    generate_yara_rule,
+    validate_directory,
+)
 from cti_automator.enrichment import EnrichmentService
 from cti_automator.exceptions import CTIAutomatorError
 from cti_automator.exporters import OpenCTIExporter, STIXExporter
+from cti_automator.memory import MemoryService
 from cti_automator.observability import configure_logging, observe
 from cti_automator.repositories import ingest_repository_reports
+from cti_automator.secops import (
+    CortexXSOARAdapter,
+    TheHiveAdapter,
+    WebhookNotifier,
+    build_case,
+)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -70,6 +84,71 @@ def build_parser() -> argparse.ArgumentParser:
     repository.add_argument("--opencti", action="store_true")
     repository.set_defaults(handler=_ingest_repositories)
 
+    detections = subparsers.add_parser(
+        "generate-detections",
+        help="Generate YARA/SIGMA proposals from a PDF analysis.",
+    )
+    detections.add_argument("file", type=Path)
+    detections.add_argument(
+        "--formats",
+        nargs="+",
+        choices=("yara", "sigma"),
+        default=["yara", "sigma"],
+    )
+    detections.add_argument("--yara-dir", type=Path)
+    detections.add_argument("--sigma-dir", type=Path)
+    detections.add_argument("--pr-repo", help="Authorized owner/name repository.")
+    detections.add_argument(
+        "--submit",
+        action="store_true",
+        help="Actually open the proposal pull request (default is dry-run).",
+    )
+    detections.set_defaults(handler=_generate_detections)
+
+    validate = subparsers.add_parser(
+        "validate-detections", help="Validate committed rule files (GitOps gate)."
+    )
+    validate.add_argument("directory", type=Path)
+    validate.set_defaults(handler=_validate_detections)
+
+    memory_remember = subparsers.add_parser(
+        "memory-remember", help="Store one PDF analysis in historical memory."
+    )
+    memory_remember.add_argument("file", type=Path)
+    memory_remember.set_defaults(handler=_memory_remember)
+
+    memory_recall = subparsers.add_parser(
+        "memory-recall", help="Recall cited historical fragments for a query."
+    )
+    memory_recall.add_argument("query")
+    memory_recall.add_argument("--limit", type=int, default=5)
+    memory_recall.set_defaults(handler=_memory_recall)
+
+    secops = subparsers.add_parser(
+        "create-secops-case",
+        help="Create a TheHive or Cortex XSOAR case from one PDF analysis.",
+    )
+    secops.add_argument("file", type=Path)
+    secops.add_argument("--destination", choices=("thehive", "xsoar"), required=True)
+    secops.add_argument(
+        "--severity", choices=("low", "medium", "high", "critical"), default=None
+    )
+    secops.add_argument(
+        "--dry-run", action="store_true", help="Only show the planned payload."
+    )
+    secops.set_defaults(handler=_create_secops_case)
+
+    chatops = subparsers.add_parser(
+        "notify-chatops",
+        help="Send a signed ChatOps notification about one PDF analysis.",
+    )
+    chatops.add_argument("file", type=Path)
+    chatops.add_argument("--destination", required=True)
+    chatops.add_argument(
+        "--dry-run", action="store_true", help="Only show the planned notification."
+    )
+    chatops.set_defaults(handler=_notify_chatops)
+
     mcp = subparsers.add_parser("mcp", help="Run the FastMCP server.")
     mcp.add_argument("--transport", choices=("stdio", "sse", "streamable-http"))
     mcp.add_argument(
@@ -101,6 +180,16 @@ def main(argv: Sequence[str] | None = None) -> int:
                 "CTI_LOG_LEVEL must be DEBUG, INFO, WARNING, ERROR or CRITICAL",
                 "--host and --port require an HTTP transport",
                 "MCP port must be between 1 and 65535",
+                "CTI_THEHIVE_URL and CTI_THEHIVE_TOKEN are required",
+                "CTI_XSOAR_URL and CTI_XSOAR_TOKEN are required",
+                "GITHUB_TOKEN is required to submit detection proposals",
+                "Repository is not in CTI_REPOSITORY_ALLOWLIST",
+                "Repository is not in CTI_DETECTION_PR_ALLOWLIST",
+                "Historical memory is disabled; set CTI_MEMORY_ENABLED=true",
+                "ChatOps destination is not configured",
+                "memory recall limit must be between 1 and 25",
+                "memory query cannot be empty",
+                "notification message cannot be empty",
             }
             else f"{type(exc).__name__}; check configuration and structured error events"
         )
@@ -208,6 +297,91 @@ def _ingest_repositories(args: argparse.Namespace, settings: Settings) -> int:
         print(json.dumps({"imported_reports": len(analyses)}))
     else:
         print(json.dumps([analysis.model_dump(mode="json") for analysis in analyses]))
+    return 0
+
+
+def _generate_detections(args: argparse.Namespace, settings: Settings) -> int:
+    analysis = PDFAnalyzer(settings).analyze(args.file)
+    rules = []
+    if "yara" in args.formats:
+        rules.append(generate_yara_rule(analysis))
+    if "sigma" in args.formats:
+        rules.extend(generate_sigma_rules(analysis))
+    summary: dict[str, object] = {"rules": [rule.summary() for rule in rules]}
+    if args.yara_dir:
+        outcome = FileDetectionExporter(args.yara_dir).export(
+            tuple(rule for rule in rules if rule.rule_format == "yara")
+        )
+        summary["yara_export"] = outcome.model_dump(mode="json")
+    if args.sigma_dir:
+        outcome = FileDetectionExporter(args.sigma_dir).export(
+            tuple(rule for rule in rules if rule.rule_format == "sigma")
+        )
+        summary["sigma_export"] = outcome.model_dump(mode="json")
+    if args.pr_repo:
+        exporter = GitHubPullRequestExporter(settings)
+        plan = exporter.plan(analysis, tuple(rules), args.pr_repo)
+        if args.submit:
+            summary["pull_request"] = exporter.submit(plan)
+        else:
+            summary["pull_request_plan"] = plan.summary()
+    print(json.dumps(summary, indent=2))
+    return 0
+
+
+def _validate_detections(args: argparse.Namespace, settings: Settings) -> int:
+    count, errors = validate_directory(args.directory)
+    if errors:
+        print(json.dumps({"valid": False, "rules": count, "errors": errors}, indent=2))
+        return 1
+    print(json.dumps({"valid": True, "rules": count}))
+    return 0
+
+
+def _memory_remember(args: argparse.Namespace, settings: Settings) -> int:
+    analysis = PDFAnalyzer(settings).analyze(args.file)
+    result = MemoryService(settings).remember(analysis)
+    print(result.model_dump_json())
+    return 0
+
+
+def _memory_recall(args: argparse.Namespace, settings: Settings) -> int:
+    fragments = MemoryService(settings).recall(args.query, limit=args.limit)
+    print(json.dumps([item.model_dump(mode="json") for item in fragments], indent=2))
+    return 0
+
+
+def _create_secops_case(args: argparse.Namespace, settings: Settings) -> int:
+    analysis = PDFAnalyzer(settings).analyze(args.file)
+    case = build_case(analysis, severity=args.severity)
+    adapter: TheHiveAdapter | CortexXSOARAdapter = (
+        TheHiveAdapter(settings)
+        if args.destination == "thehive"
+        else CortexXSOARAdapter(settings)
+    )
+    delivery = adapter.deliver(case, dry_run=args.dry_run)
+    print(
+        json.dumps(
+            {
+                "case": case.payload_summary(),
+                "delivery": delivery.model_dump(mode="json"),
+            },
+            indent=2,
+        )
+    )
+    return 0
+
+
+def _notify_chatops(args: argparse.Namespace, settings: Settings) -> int:
+    analysis = PDFAnalyzer(settings).analyze(args.file)
+    message = (
+        f"[CTI] {analysis.source_document}: {len(analysis.indicators)} indicators, "
+        f"{len(analysis.ttps)} ATT&CK mappings."
+    )
+    result = WebhookNotifier(settings).notify(
+        args.destination, message, dry_run=args.dry_run
+    )
+    print(result.model_dump_json())
     return 0
 
 

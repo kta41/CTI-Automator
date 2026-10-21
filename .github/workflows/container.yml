@@ -1,4 +1,4 @@
-name: Container and Kubernetes
+name: Container and Compose
 
 on:
   pull_request:
@@ -26,6 +26,8 @@ jobs:
           ruff check src tests
           mypy src
           pytest
+      - name: Validate Compose deployment
+        run: docker compose config --quiet
       - name: Build image
         run: docker build -t cti-automator:ci .
       - name: Smoke test real OpenCTI adapter and MCP runtime
@@ -33,49 +35,13 @@ jobs:
           docker run --rm -d --name cti-runtime-ci --read-only --tmpfs /tmp:rw,size=134217728 --cap-drop ALL --security-opt no-new-privileges -v "$PWD/tests/runtime_smoke.py:/opt/runtime_smoke.py:ro" cti-automator:ci
           trap 'docker stop cti-runtime-ci' EXIT
           docker exec cti-runtime-ci python /opt/runtime_smoke.py
-          docker stop cti-runtime-ci
-          trap - EXIT
-      - name: Validate monitoring configuration and alert thresholds
-        run: |
-          python - <<'PY'
-          from pathlib import Path
-          import yaml
-          config = yaml.safe_load(Path("monitoring/01-config.yaml").read_text())["data"]
-          output = Path("/tmp/cti-monitoring")
-          output.mkdir()
-          for name, content in config.items():
-              (output / name).write_text(content)
+          docker exec cti-runtime-ci python - <<'PY'
+          import urllib.request
+          assert urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=15).status == 200
+          metrics = urllib.request.urlopen('http://127.0.0.1:8000/metrics', timeout=15).read()
+          assert b'cti_operations_total' in metrics
           PY
-          docker run --rm --entrypoint promtool -v /tmp/cti-monitoring:/etc/prometheus:ro prom/prometheus:v3.5.0 check config /etc/prometheus/prometheus.yml
-          docker run --rm --entrypoint promtool -v /tmp/cti-monitoring:/etc/prometheus:ro -v "$PWD/tests/fixtures/prometheus-rules-test.yml:/tmp/rules-test.yml:ro" prom/prometheus:v3.5.0 test rules /tmp/rules-test.yml
-      - name: Create disposable Kubernetes cluster
-        uses: helm/kind-action@v1
-        with:
-          cluster_name: cti-ci
-      - name: Validate native manifests and MCP startup
-        run: |
-          kind load docker-image cti-automator:ci --name cti-ci
-          kubectl apply -f k8s/00-namespace.yaml
-          kubectl apply --dry-run=server -f k8s/
-          kubectl apply -f k8s/01-serviceaccount.yaml -f k8s/02-configmap.yaml -f k8s/03-secret.yaml -f k8s/05-service.yaml
-          kubectl set image --local -f k8s/04-deployment.yaml cti-automator=cti-automator:ci -o yaml > /tmp/cti-deployment.yaml
-          python - <<'PY'
-          import yaml
-          path = "/tmp/cti-deployment.yaml"
-          with open(path) as stream:
-              deployment = yaml.safe_load(stream)
-          for volume in deployment["spec"]["template"]["spec"]["volumes"]:
-              if volume["name"] == "state":
-                  volume.pop("persistentVolumeClaim")
-                  volume["emptyDir"] = {}
-          with open(path, "w") as stream:
-              yaml.safe_dump(deployment, stream)
-          PY
-          kubectl apply -f /tmp/cti-deployment.yaml
-          kubectl -n cti-automator rollout status deployment/cti-automator --timeout=180s
-          kubectl -n cti-automator exec deployment/cti-automator -- python -c "import urllib.request; assert urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=10).status == 200"
-          kubectl -n cti-automator exec deployment/cti-automator -- python -c "from pycti import OpenCTIApiClient; import urllib.request; assert b'cti_operations_total' in urllib.request.urlopen('http://127.0.0.1:8000/metrics', timeout=10).read()"
-          kubectl -n cti-automator exec -i deployment/cti-automator -- python - <<'PY'
+          docker exec cti-runtime-ci python - <<'PY'
           import asyncio
           from fastmcp import Client
 
@@ -87,15 +53,18 @@ jobs:
                       "analyze_pdf", "export_pdf_to_opencti", "export_pdf_to_stix",
                       "get_otx_pulses", "get_threatfox_iocs",
                       "enrich_indicators", "push_to_opencti", "ingest_repositories",
+                      "generate_detections", "remember_analysis", "recall_memory",
+                      "create_secops_case", "send_chatops_notification",
                   }
 
           asyncio.run(check())
           PY
-      - name: Report workload diagnostics
-        if: failure()
+          docker stop cti-runtime-ci
+          trap - EXIT
+      - name: Validate monitoring configuration and alert thresholds
         run: |
-          kubectl -n cti-automator get pods,events
-          kubectl -n cti-automator logs deployment/cti-automator --all-containers=true
+          docker run --rm --entrypoint promtool -v "$PWD/monitoring:/etc/prometheus:ro" prom/prometheus:v3.5.0 check config /etc/prometheus/prometheus.yml
+          docker run --rm --entrypoint promtool -v "$PWD/monitoring:/etc/prometheus:ro" -v "$PWD/tests/fixtures/prometheus-rules-test.yml:/tmp/rules-test.yml:ro" prom/prometheus:v3.5.0 test rules /tmp/rules-test.yml
 
   publish:
     if: startsWith(github.ref, 'refs/tags/v')

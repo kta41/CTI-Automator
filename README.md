@@ -18,8 +18,8 @@ and MITRE ATT&CK mappings, optionally enriches public indicators, and exports
 STIX 2.1 bundles to files or OpenCTI.
 
 The same operations are available through a Python CLI and a standalone
-FastMCP server. Docker and native Kubernetes manifests support scheduled
-ingestion in K3s without Argo CD or custom resources.
+FastMCP server. Docker Compose supports scheduled ingestion with optional
+profiles for local AI, historical memory and monitoring.
 
 **Privacy-first, not remote-service-free:** Ollama is the default analysis
 provider. Hosted AI and VirusTotal/Shodan enrichment require explicit
@@ -32,7 +32,11 @@ OpenCTI permissions must be validated in your own environment.
 - [Installation and configuration](#installation-and-configuration)
 - [Using the CLI](#using-the-cli)
 - [Using MCP](#using-mcp)
-- [Native Kubernetes deployment](#native-kubernetes-deployment)
+- [Data protection (DLP)](#data-protection-dlp)
+- [Detection as Code](#detection-as-code)
+- [Historical memory (RAG)](#historical-memory-rag)
+- [SecOps and ChatOps](#secops-and-chatops)
+- [Docker Compose deployment](#docker-compose-deployment)
 - [Logs, metrics and monitoring](#logs-metrics-and-monitoring)
 - [Development and releases](#development-and-releases)
 
@@ -50,7 +54,7 @@ PDF / authorized repository reports ── Text + AI analysis ──┤
                                                            │
                                               STIX 2.1 → file / OpenCTI
 
-                  CLI / MCP / scheduled Kubernetes Jobs
+                  CLI / MCP / Compose ingestion loop
                      JSON events + Prometheus metrics
 ```
 
@@ -209,7 +213,8 @@ cti-automator ingest-repositories
 cti-automator ingest-repositories --opencti
 ```
 
-Choose a writable checkpoint location outside Kubernetes. Fetching or analyzing
+Choose a writable checkpoint location outside the deployment. Fetching or
+analyzing
 a report does not itself authorize an OpenCTI import. Successfully checkpointed
 repository content is not reprocessed automatically; choose a separate state
 path if you intentionally need a new processing/delivery pass.
@@ -223,6 +228,100 @@ cti-automator export-pdf report.pdf --enrich virustotal --stix-output report.jso
 
 These commands require the selected provider credentials and a batch that
 passes the public-indicator policy described above.
+
+### Data protection (DLP)
+
+Enable configurable PII redaction before any LLM call or embedding:
+
+```bash
+export CTI_DLP_ENABLED=true
+export CTI_DLP_EMAIL_DOMAINS=corp.example
+export CTI_DLP_INTERNAL_CIDRS=10.0.0.0/8,192.168.0.0/16
+export CTI_DLP_NAMES="Alice Smith"
+export CTI_DLP_ALLOWED_VALUES=203.0.113.7   # public IoCs that must survive
+cti-automator analyze-pdf report.pdf
+```
+
+Protected values are replaced with stable `<CTI_EMAIL_n>`, `<CTI_IP_n>` and
+`<CTI_NAME_n>` placeholders for the whole execution; counts per category are
+exported through the `cti_redactions_total` metric without logging any
+original value. A sanitization failure blocks the LLM call instead of sending
+unprotected text. Detection is heuristic (regex and CIDR membership); review
+the residual risk documented for ambiguous names and unusual formats.
+
+### Detection as Code
+
+Generate YARA and SIGMA **proposals** from an analyzed report:
+
+```bash
+cti-automator generate-detections report.pdf \
+  --yara-dir detections --sigma-dir detections
+cti-automator validate-detections detections   # CI GitOps gate
+```
+
+Optional pull-request export requires an explicit allowlist and a token;
+without `--submit` the exporter only prints a dry-run plan:
+
+```bash
+export CTI_DETECTION_PR_ALLOWLIST=acme/detections
+export GITHUB_TOKEN=ghp_...
+cti-automator generate-detections report.pdf --pr-repo acme/detections
+cti-automator generate-detections report.pdf --pr-repo acme/detections --submit
+```
+
+Rules always carry `status="proposal"` (YARA) or the
+`cti-automator-proposal` marker (SIGMA); merging requires human review
+through the `Detection rules GitOps gate` workflow, which validates every
+change to [detections/](detections/). Compile YARA rules with `yara` and check
+SIGMA rules with `sigma-cli` before deployment. Nothing is deployed
+automatically.
+
+### Historical memory (RAG)
+
+Disabled by default; local Qdrant plus local Ollama embeddings keep data on
+the host:
+
+```bash
+docker run -d -p 6333:6333 qdrant/qdrant
+ollama pull nomic-embed-text
+export CTI_MEMORY_ENABLED=true
+cti-automator memory-remember report.pdf
+cti-automator memory-recall "same infrastructure earlier?" --limit 5
+```
+
+Chunks carry tenant, source document, techniques and creation time; recall is
+tenant-isolated and returns cited fragments. DLP sanitization is applied
+before embeddings, retention is enforced with
+`CTI_MEMORY_RETENTION_DAYS`, and remote embeddings require the explicit
+`CTI_MEMORY_REMOTE_EMBEDDINGS=true` opt-in plus `AI_*` credentials.
+
+### SecOps and ChatOps
+
+Create one idempotent case per report in TheHive or Cortex XSOAR; dry-run is
+always available:
+
+```bash
+export CTI_THEHIVE_URL=https://thehive.internal
+export CTI_THEHIVE_TOKEN=...
+cti-automator create-secops-case report.pdf --destination thehive --dry-run
+cti-automator create-secops-case report.pdf --destination thehive --severity high
+```
+
+Cases are keyed by a deterministic idempotency key (document + indicators +
+techniques): retries reconcile ambiguous responses instead of duplicating,
+with bounded attempts (`CTI_SECOPS_RETRY_ATTEMPTS`). ChatOps notifications
+are deduplicated, HMAC-signed webhooks configured as `name=url` pairs:
+
+```bash
+export CTI_CHATOPS_WEBHOOKS='soc=https://hooks.example/abcd'
+export CTI_CHATOPS_SECRETS='soc=signing-secret'
+cti-automator notify-chatops report.pdf --destination soc --dry-run
+cti-automator notify-chatops report.pdf --destination soc
+```
+
+HTTPS public destinations require no extra consent; internal or plain-HTTP
+hosts must be listed in `CTI_SECOPS_ALLOWED_HOSTS` (SSRF protection). No
+automatic response actions are performed.
 
 ## Using MCP
 
@@ -245,6 +344,11 @@ an HTTP transport; ports must be between 1 and 65535.
 | `enrich_indicators` | Enrich a reviewed list using explicit `providers` |
 | `push_to_opencti` | Import normalized indicators |
 | `ingest_repositories` | Analyze allowlisted reports; optional `opencti=true` |
+| `generate_detections` | Return YARA/SIGMA proposal summaries (no writes) |
+| `remember_analysis` | Store one analysis in historical memory |
+| `recall_memory` | Recall cited fragments for a query |
+| `create_secops_case` | Plan or create a TheHive/XSOAR case; `dry_run` defaults to true |
+| `send_chatops_notification` | Plan or send a signed notification; `dry_run` defaults to true |
 
 PDF tools also accept optional `enrich` providers. File paths are resolved on
 the server, not on the client: make required reports accessible to that process.
@@ -253,100 +357,71 @@ the server, not on the client: make required reports accessible to that process.
 localhost or a trusted internal network; do not expose it through a public
 Ingress or LoadBalancer.
 
-## Native Kubernetes deployment
+## Docker Compose deployment
 
-[k8s/](k8s/) contains standard manifests for K3s: Namespace, ServiceAccount,
-ConfigMap, Secret template, MCP Deployment/Service, ingestion CronJob and a
-state PVC. No Argo CD, Kustomize or CRDs are required.
+[compose.yaml](compose.yaml) replaces the previous K3s manifests: it runs the
+MCP server and a scheduled ingestion loop, with optional profiles for local
+AI (`local-ai`), historical memory (`memory`) and monitoring (`monitoring`).
 
 ### Prepare the image
 
 The container workflow validates builds on pull requests and `main`. Version
 tags publish `ghcr.io/kta41/cti-automator:<version>` and stable `latest` after
-validation, including a disposable Kubernetes smoke test. Make the GHCR package
-public or configure an `imagePullSecret`. Set the same immutable version or
-digest in the Deployment and CronJob for production; the default `latest`
-is a bootstrap reference, not a guarantee that an image is already published.
-
-For local testing on a single K3s node:
+validation. Pin an immutable version or digest in `compose.yaml` for
+production; the default `latest` is a bootstrap reference. To build locally
+instead, change the anchor image to `build: .`:
 
 ```bash
-docker build -t cti-automator:local .
-docker save cti-automator:local -o /tmp/cti-automator-local.tar
-sudo k3s ctr images import /tmp/cti-automator-local.tar
-rm /tmp/cti-automator-local.tar
+docker compose build 2>/dev/null || docker build -t cti-automator:local .
 ```
 
-Set both workload images to `cti-automator:local` before applying. For multiple
-nodes, import on every schedulable node or use a registry.
+### Configure and run
 
-### Configure and apply
-
-Set the actual reachable Ollama endpoint in [the ConfigMap](k8s/02-configmap.yaml).
-OpenCTI must also resolve from the pods, not just from your workstation.
-
-[The Secret](k8s/03-secret.yaml) is a template: supply real values in a protected
-local copy, never commit them, and never reapply placeholders over a configured
-Secret. The scheduled API import requires `OTX_API_KEY`, `ABUSECH_API_KEY`,
-`OPENCTI_URL` and `OPENCTI_TOKEN`. Add optional enrichment/GitHub keys only as
-needed. Kubernetes Secrets are not encrypted merely by base64 encoding;
-restrict RBAC and enable encryption at rest. Docker excludes manifests and
-environment files from its build context.
+Copy `.env.example` to `.env` and fill real values; never commit it. The
+scheduled API import requires `OTX_API_KEY`, `ABUSECH_API_KEY`, `OPENCTI_URL`
+and `OPENCTI_TOKEN`. OpenCTI and any hosted AI must resolve from the
+containers, not just from your workstation.
 
 ```bash
-kubectl apply -f k8s/
-kubectl -n cti-automator rollout status deployment/cti-automator --timeout=180s
-kubectl -n cti-automator get pods,services,cronjobs,pvc
-```
-
-Files are numbered so the namespace is created first. To validate schema without
-starting workloads on a fresh cluster:
-
-```bash
-kubectl apply -f k8s/00-namespace.yaml
-kubectl apply --dry-run=server -f k8s/
-```
-
-Pods run as UID/GID 10001 with no mounted ServiceAccount token, dropped
-capabilities, a read-only root filesystem and bounded writable `/tmp`.
-Startup, readiness and liveness probes use HTTP health checks.
-
-The shared `cti-automator-state` PVC preserves repository checkpoints and
-analysis artifacts. Its `ReadWriteOnce` mode suits single-node K3s; multi-node
-deployments need compatible storage/scheduling or a separate checkpoint store.
-Ensure your cluster has a suitable default StorageClass.
-
-### Check MCP and scheduled imports
-
-The MCP Service is internal (`ClusterIP`):
-
-```bash
-kubectl -n cti-automator port-forward service/cti-automator 8000:8000
-# In another terminal:
+docker compose up -d mcp ingest
+docker compose ps
 curl --fail http://127.0.0.1:8000/healthz
 ```
 
-Health checks test process responsiveness, not source APIs, credentials,
-Ollama or OpenCTI.
+Containers run as UID/GID 10001 with dropped capabilities, read-only root
+filesystems, `no-new-privileges` and bounded writable `/tmp`. The MCP port is
+published on loopback only — remote authentication is not implemented.
 
-The CronJob runs every 30 minutes, forbids overlap and limits each Job to
-15 minutes. It imports OTX, then ThreatFox, then repository reports if the
-allowlist is non-empty. It does not enable enrichment automatically. A failure
-stops the Job explicitly; subsequent sources are not queried.
-
-To run an import manually after configuring credentials:
+Optional components are enabled with profiles:
 
 ```bash
-kubectl -n cti-automator create job --from=cronjob/cti-automator-ingest cti-ingest-check
-kubectl -n cti-automator wait --for=condition=complete job/cti-ingest-check --timeout=900s
-kubectl -n cti-automator logs job/cti-ingest-check
+docker compose --profile local-ai up -d      # local Ollama at 127.0.0.1:11434
+docker compose --profile memory up -d        # local Qdrant for RAG memory
+docker compose --profile monitoring up -d    # Prometheus (9090) + Grafana (3000)
 ```
 
-For failures, inspect the affected pod and events:
+The `ingest` service replaces the previous CronJob: it imports OTX, then
+ThreatFox, then repository reports if the allowlist is non-empty, every 30
+minutes, without enabling enrichment. Repository checkpoints persist in
+`./state` (bind mount); back that directory up.
+
+### Check MCP and manual imports
+
+Health checks test process responsiveness, not source APIs, credentials,
+Ollama or OpenCTI. The `mcp` service healthcheck polls `/healthz`.
+
+To run an import manually with the same configuration:
 
 ```bash
-kubectl -n cti-automator describe pod <pod>
-kubectl -n cti-automator get events --sort-by=.metadata.creationTimestamp
+docker compose run --rm ingest sh -c \
+  'cti-automator ingest-otx --opencti && cti-automator ingest-threatfox --opencti'
+```
+
+For failures, inspect service logs and restart policies:
+
+```bash
+docker compose logs -f mcp ingest
+docker compose restart ingest
 ```
 
 ## Logs, metrics and monitoring
@@ -368,25 +443,26 @@ process-local: the static monitoring target scrapes MCP, not short-lived CLI
 Jobs. Aggregate Job JSON events in your log backend; these metrics do not
 claim cluster-wide Job totals.
 
-[monitoring/](monitoring/) supplies optional native Prometheus manifests,
-four alert rules and a Grafana dashboard:
+[monitoring/](monitoring/) supplies the Prometheus configuration, four alert
+rules and a Grafana dashboard used by the Compose `monitoring` profile:
 
 ```bash
-kubectl apply -f monitoring/
-kubectl -n cti-automator rollout status deployment/cti-prometheus
-kubectl -n cti-automator port-forward service/cti-prometheus 9090:9090
+docker compose --profile monitoring up -d
+docker compose logs -f prometheus grafana
 ```
 
-Create the application namespace first. Alerts cover endpoint unavailability,
-error ratio above 20%, quota exhaustion and p95 latency above 120 seconds.
-Edit thresholds/durations in [the monitoring ConfigMap](monitoring/01-config.yaml)
-and restart Prometheus to reload. Retention is 7 days/800 MB on ephemeral
-storage; use a PVC for durable history. Configure Alertmanager separately
-for notification delivery.
+Prometheus is reachable on `127.0.0.1:9090` and Grafana on `127.0.0.1:3000`
+(default password `changeme` — override `GF_SECURITY_ADMIN_PASSWORD` in
+`.env`). Alerts cover endpoint unavailability, error ratio above 20%, quota
+exhaustion and p95 latency above 120 seconds. Edit thresholds/durations in
+[monitoring/rules.yml](monitoring/rules.yml) and restart Prometheus to
+reload. Retention is 7 days/800 MB on the `prometheus_data` volume; use a
+bind mount for durable history. Configure Alertmanager separately for
+notification delivery.
 
-Import the `cti-automator.json` entry from [the dashboard ConfigMap](monitoring/03-dashboard.yaml)
-into Grafana, or enable a ConfigMap dashboard sidecar, and select the Prometheus
-datasource. All monitoring Services remain internal.
+The dashboard is provisioned automatically from
+[monitoring/grafana/dashboards/cti-automator.json](monitoring/grafana/dashboards/cti-automator.json)
+with the Prometheus datasource. All monitoring ports stay on loopback.
 
 ## Development and releases
 
@@ -403,11 +479,16 @@ src/cti_automator/
   enrichment.py         Optional VirusTotal/Shodan queries
   repositories.py       Authorized reports and checkpoints
   exporters/            STIX and OpenCTI delivery
+  sanitizer.py          Configurable DLP redaction before LLM/embeddings
+  detections.py         YARA/SIGMA proposals, validation and PR export
+  memory.py             Qdrant-backed historical memory (RAG)
+  secops.py             TheHive/XSOAR cases and signed ChatOps webhooks
   observability.py      Structured events and metrics
 tests/                  Regression tests and runtime/alert fixtures
-k8s/                    Native application manifests
-monitoring/             Optional Prometheus and Grafana configuration
-.github/workflows/      Package releases and container validation/publication
+detections/             Committed rule proposals under GitOps review
+compose.yaml            Docker Compose deployment (mcp, ingest, profiles)
+monitoring/             Prometheus and Grafana configuration for Compose
+.github/workflows/      Releases, container, PyPI publishing and rule gates
 Dockerfile              Multistage, non-root runtime with libmagic
 pyproject.toml          Packaging, dependencies and development tooling
 .env.example            Configuration reference
@@ -434,7 +515,16 @@ For a release, update the project version, validate and commit the intended
 changes, then create and push a matching semantic tag such as `v0.2.0`.
 Tags matching `v*` trigger package validation/build and a GitHub Release with
 wheel and source archive. The container workflow separately publishes validated
-images to GHCR. Public PyPI publication is not configured.
+images to GHCR.
+
+Optional Python distribution uses the manual `Publish Python distribution`
+workflow with PyPI Trusted Publishing (OIDC), minimal permissions, build
+provenance attestations, tag/version consistency checks and secret-hygiene
+checks on the built artifacts. Rehearse on TestPyPI first (the default
+target); promoting to PyPI requires the protected `pypi` environment and
+explicit authorization. The base install is fully functional — all
+integrations share the same `requests`-based core, so no optional extras are
+required at runtime beyond `dev` for development.
 
 ---
 

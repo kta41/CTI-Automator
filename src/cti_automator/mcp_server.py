@@ -13,11 +13,20 @@ from starlette.responses import JSONResponse, Response
 from cti_automator.analyzer import PDFAnalyzer
 from cti_automator.config import Settings
 from cti_automator.connectors import OTXClient, ThreatFoxClient
+from cti_automator.detections import generate_sigma_rules, generate_yara_rule
 from cti_automator.enrichment import EnrichmentService, Provider
 from cti_automator.exporters import OpenCTIExporter, STIXExporter
+from cti_automator.memory import MemoryService
 from cti_automator.models import Indicator
 from cti_automator.observability import configure_logging, observe
 from cti_automator.repositories import ingest_repository_reports
+from cti_automator.secops import (
+    CaseSeverity,
+    CortexXSOARAdapter,
+    TheHiveAdapter,
+    WebhookNotifier,
+    build_case,
+)
 
 
 def create_mcp_server(settings: Settings | None = None) -> FastMCP:
@@ -146,5 +155,78 @@ def create_mcp_server(settings: Settings | None = None) -> FastMCP:
                 opencti=opencti,
             )
         ]
+
+    @server.tool
+    @observe("mcp", new_run=True)
+    def generate_detections(file: str) -> list[dict[str, object]]:
+        """Generate YARA and SIGMA proposals (dry-run summaries, no writes)."""
+        analysis = PDFAnalyzer(runtime_settings).analyze(Path(file))
+        rules = [generate_yara_rule(analysis)]
+        rules.extend(generate_sigma_rules(analysis))
+        return [rule.summary() for rule in rules]
+
+    @server.tool
+    @observe("mcp", new_run=True)
+    def remember_analysis(file: str) -> dict[str, object]:
+        """Store one analyzed PDF in the configured historical memory."""
+        analysis = PDFAnalyzer(runtime_settings).analyze(Path(file))
+        return (
+            MemoryService(runtime_settings).remember(analysis).model_dump(mode="json")
+        )
+
+    @server.tool
+    @observe("mcp", new_run=True)
+    def recall_memory(query: str, limit: int = 5) -> list[dict[str, object]]:
+        """Recall cited historical fragments for a query within the tenant."""
+        return [
+            fragment.model_dump(mode="json")
+            for fragment in MemoryService(runtime_settings).recall(query, limit=limit)
+        ]
+
+    @server.tool
+    @observe("mcp", new_run=True)
+    def create_secops_case(
+        file: str,
+        destination: str,
+        severity: str | None = None,
+        dry_run: bool = True,
+    ) -> dict[str, object]:
+        """Create a TheHive or Cortex XSOAR case; dry-run is the default."""
+        if destination not in {"thehive", "xsoar"}:
+            raise ValueError("destination must be thehive or xsoar")
+        if severity is not None and severity not in {
+            "low",
+            "medium",
+            "high",
+            "critical",
+        }:
+            raise ValueError("severity must be low, medium, high or critical")
+        analysis = PDFAnalyzer(runtime_settings).analyze(Path(file))
+        case = build_case(
+            analysis,
+            severity=cast("CaseSeverity | None", severity),
+        )
+        adapter: TheHiveAdapter | CortexXSOARAdapter = (
+            TheHiveAdapter(runtime_settings)
+            if destination == "thehive"
+            else CortexXSOARAdapter(runtime_settings)
+        )
+        delivery = adapter.deliver(case, dry_run=dry_run)
+        return {
+            "case": case.payload_summary(),
+            "delivery": delivery.model_dump(mode="json"),
+        }
+
+    @server.tool
+    @observe("mcp", new_run=True)
+    def send_chatops_notification(
+        destination: str, message: str, dry_run: bool = True
+    ) -> dict[str, object]:
+        """Send a signed ChatOps notification; dry-run is the default."""
+        return (
+            WebhookNotifier(runtime_settings)
+            .notify(destination, message, dry_run=dry_run)
+            .model_dump(mode="json")
+        )
 
     return server

@@ -1,0 +1,43 @@
+name: Detection rules GitOps gate
+
+# Validates committed detection proposals. Rules are merged only after human
+# review; this gate never deploys anything by itself.
+
+on:
+  pull_request:
+    paths:
+      - "detections/**"
+      - ".github/workflows/detections.yml"
+  push:
+    branches: [main]
+    paths:
+      - "detections/**"
+      - ".github/workflows/detections.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Validate detection proposals
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install package
+        run: python -m pip install --upgrade pip && python -m pip install .
+
+      - name: Validate committed rules
+        run: |
+          if [ -d detections ]; then
+            cti-automator validate-detections detections
+          else
+            echo "no detections directory yet; nothing to validate"
+          fi

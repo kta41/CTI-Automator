@@ -19,3 +19,23 @@ class LLMResponseError(CTIAutomatorError):
 
 class ExportError(CTIAutomatorError):
     """Raised when intelligence cannot be represented or delivered."""
+
+
+class SanitizationError(CTIAutomatorError):
+    """Raised when DLP policy enforcement fails before any LLM call."""
+
+
+class DetectionRuleError(CTIAutomatorError):
+    """Raised when defensive rules cannot be generated or validated."""
+
+
+class MemoryStoreError(CTIAutomatorError):
+    """Raised when historical memory is unavailable or returns invalid data."""
+
+
+class SecOpsError(CTIAutomatorError):
+    """Raised when a SecOps case cannot be delivered or reconciled."""
+
+
+class NotificationError(CTIAutomatorError):
+    """Raised when a ChatOps notification cannot be delivered."""

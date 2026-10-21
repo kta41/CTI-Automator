@@ -30,6 +30,7 @@ LATENCY = Histogram(
 )
 ITEMS = Counter("cti_items_total", "Processed items", ["operation"])
 QUOTAS = Counter("cti_quota_errors_total", "Enrichment quota errors", ["operation"])
+REDACTIONS = Counter("cti_redactions_total", "DLP redactions by category", ["category"])
 OPERATIONS = frozenset(
     {
         "cli",
@@ -40,8 +41,12 @@ OPERATIONS = frozenset(
         "opencti",
         "enrichment",
         "repository",
+        "detections",
+        "memory",
+        "secops",
     }
 )
+REDACTION_CATEGORIES = frozenset({"email", "ip", "name"})
 
 for _operation in OPERATIONS:
     for _outcome in ("success", "error"):
@@ -49,6 +54,27 @@ for _operation in OPERATIONS:
     LATENCY.labels(_operation)
     ITEMS.labels(_operation).inc(0)
     QUOTAS.labels(_operation).inc(0)
+
+for _category in REDACTION_CATEGORIES:
+    REDACTIONS.labels(_category).inc(0)
+
+
+def record_redactions(counts: dict[str, int]) -> None:
+    """Record redaction counts per bounded category without any original value."""
+    for category, count in counts.items():
+        if category not in REDACTION_CATEGORIES:
+            raise ValueError("Unregistered redaction category label")
+        if count:
+            REDACTIONS.labels(category).inc(count)
+            logger.info(
+                "redaction",
+                extra={
+                    "event": "redaction",
+                    "operation": "analysis",
+                    "count": count,
+                    "error_category": None,
+                },
+            )
 
 
 class JSONFormatter(logging.Formatter):

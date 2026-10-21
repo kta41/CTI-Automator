@@ -11,7 +11,9 @@ build
 .env
 .env.*
 !.env.example
-k8s
-deploy
+compose.yaml
+state
+detections
+monitoring
 tests
 roadmap.MD

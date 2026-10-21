@@ -1,0 +1,101 @@
+name: cti-automator
+
+# Docker Compose deployment (replaces the previous K3s manifests).
+# Configure credentials in .env (see .env.example); never commit real secrets.
+# Profiles: local-ai (Ollama), memory (Qdrant), monitoring (Prometheus+Grafana).
+
+x-app-defaults: &app-defaults
+  image: ghcr.io/kta41/cti-automator:latest
+  read_only: true
+  user: "10001:10001"
+  cap_drop: ["ALL"]
+  security_opt: ["no-new-privileges:true"]
+  env_file:
+    - path: .env
+      required: false
+  tmpfs: ["/tmp:size=128m,mode=1777"]
+
+services:
+  mcp:
+    <<: *app-defaults
+    command: ["mcp", "--transport", "streamable-http", "--host", "0.0.0.0", "--port", "8000"]
+    ports:
+      - "127.0.0.1:8000:8000"  # loopback only: remote auth is not implemented
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+
+  ingest:
+    <<: *app-defaults
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        while true; do
+          cti-automator ingest-otx --opencti &&
+          cti-automator ingest-threatfox --opencti &&
+          if [ -n "$$CTI_REPOSITORY_ALLOWLIST" ]; then
+            cti-automator ingest-repositories --opencti
+          fi
+          sleep 1800
+        done
+    environment:
+      CTI_REPOSITORY_CHECKPOINT: /state/repositories.json
+    volumes:
+      - ./state:/state
+    restart: unless-stopped
+
+  ollama:
+    image: ollama/ollama:latest
+    profiles: [local-ai]
+    ports:
+      - "127.0.0.1:11434:11434"
+    volumes:
+      - ollama_models:/root/.ollama
+    restart: unless-stopped
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    profiles: [memory]
+    volumes:
+      - qdrant_storage:/qdrant/storage
+    restart: unless-stopped
+
+  prometheus:
+    image: prom/prometheus:v3.5.0
+    profiles: [monitoring]
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=7d
+      - --storage.tsdb.retention.size=800MB
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./monitoring/rules.yml:/etc/prometheus/rules.yml:ro
+      - prometheus_data:/prometheus
+    ports:
+      - "127.0.0.1:9090:9090"
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:11.4.0
+    profiles: [monitoring]
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: changeme  # override in .env for any real use
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana_data:/var/lib/grafana
+    ports:
+      - "127.0.0.1:3000:3000"
+    restart: unless-stopped
+
+volumes:
+  ollama_models:
+  qdrant_storage:
+  prometheus_data:
+  grafana_data:
