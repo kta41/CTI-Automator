@@ -71,6 +71,11 @@ async def verify_mcp():
             "enrich_indicators",
             "push_to_opencti",
             "ingest_repositories",
+            "generate_detections",
+            "remember_analysis",
+            "recall_memory",
+            "create_secops_case",
+            "send_chatops_notification",
         }
         try:
             await client.call_tool("get_threatfox_iocs", {"days": 0})
@@ -83,7 +88,7 @@ async def verify_mcp():
         assert (
             'cti_operations_total{operation="threatfox",outcome="error"} 1.0' in metrics
         )
-    print("MCP health, eight tools, error propagation and business metrics: OK")
+    print("MCP health, thirteen tools, error propagation and metrics: OK")
 
 
 if __name__ == "__main__":
