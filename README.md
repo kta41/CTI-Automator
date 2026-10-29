@@ -384,15 +384,33 @@ instead, change the anchor image to `build: .`:
 docker compose build 2>/dev/null || docker build -t cti-automator:local .
 ```
 
-### Configure and run
+### Configure and run (One-Command Stack)
 
-Copy `.env.example` to `.env` and fill real values; never commit it. The
-scheduled API import requires `OTX_API_KEY`, `ABUSECH_API_KEY`, `OPENCTI_URL`
-and `OPENCTI_TOKEN`. OpenCTI and any hosted AI must resolve from the
-containers, not just from your workstation.
+You can bootstrap `.env` (with auto-generated local tokens/passwords and `0600`
+permissions), create `./state`, start the Docker Compose services (including the
+Web UI on `http://127.0.0.1:8085` and MCP on `http://127.0.0.1:8000/mcp`), and
+pull the required Ollama models with a single command:
 
 ```bash
-docker compose up -d mcp ingest
+# Standard stack: Web UI + MCP + Ingest + Ollama + Qdrant (reuses host services if already running)
+cti-automator up
+
+# Full lab stack: adds Prometheus, Grafana, TheHive (5.5.0-1) and OpenCTI (6.9.29)
+cti-automator up --mode full
+
+# Inspect stack health and local endpoints
+cti-automator status
+
+# Stop all stack profiles cleanly
+cti-automator down
+```
+
+If you prefer running `docker compose` directly, `COMPOSE_PROFILES=local-ai,memory`
+is pre-set in `.env.example`, so a single `docker compose up -d` starts the
+core services plus local AI and Qdrant:
+
+```bash
+docker compose up -d
 docker compose ps
 curl --fail http://127.0.0.1:8000/healthz
 ```

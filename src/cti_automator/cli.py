@@ -31,6 +31,12 @@ from cti_automator.secops import (
     WebhookNotifier,
     build_case,
 )
+from cti_automator.stack import (
+    build_stack_up_plan,
+    execute_stack_down,
+    execute_stack_up,
+    stack_status,
+)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -144,7 +150,43 @@ def build_parser() -> argparse.ArgumentParser:
     )
     ui.add_argument("--host", default="127.0.0.1", help="Loopback interface only.")
     ui.add_argument("--port", type=int, default=8080, help="Port for local web UI.")
+    ui.add_argument(
+        "--allow-container-bind",
+        action="store_true",
+        help="Allow 0.0.0.0 inside a container published to host loopback.",
+    )
     ui.set_defaults(handler=_run_ui)
+
+    stack_up = subparsers.add_parser(
+        "up",
+        help="One-command stack startup (bootstraps .env, starts Compose and pulls models).",
+    )
+    stack_up.add_argument(
+        "--mode",
+        choices=("minimal", "standard", "full"),
+        default="standard",
+        help="Stack preset (default: standard = UI + MCP + Ingest + Ollama + Qdrant).",
+    )
+    stack_up.add_argument("--with-opencti", action="store_true")
+    stack_up.add_argument("--with-thehive", action="store_true")
+    stack_up.add_argument("--with-monitoring", action="store_true")
+    stack_up.add_argument("--build", action="store_true")
+    stack_up.add_argument("--no-pull-models", action="store_true")
+    stack_up.add_argument("--dry-run", action="store_true")
+    stack_up.set_defaults(handler=_run_stack_up)
+
+    stack_down = subparsers.add_parser(
+        "down",
+        help="Stop all active and optional Docker Compose stack services.",
+    )
+    stack_down.add_argument("--dry-run", action="store_true")
+    stack_down.set_defaults(handler=_run_stack_down)
+
+    status_cmd = subparsers.add_parser(
+        "status",
+        help="Show stack health, detected versions and local endpoints.",
+    )
+    status_cmd.set_defaults(handler=_run_stack_status)
 
     secops = subparsers.add_parser(
         "create-secops-case",
@@ -398,12 +440,40 @@ def _run_ui(args: argparse.Namespace, settings: Settings) -> int:
 
     if not 1 <= args.port <= 65535:
         raise ValueError("UI port must be between 1 and 65535")
-    if not is_loopback_host(args.host):
+    if not getattr(args, "allow_container_bind", False) and not is_loopback_host(
+        args.host
+    ):
         raise ValueError(
             "Local UI requires a loopback host (127.0.0.1, ::1 or localhost)"
         )
     app = create_ui_app(settings)
     uvicorn.run(app, host=args.host, port=args.port, log_config=None, access_log=False)
+    return 0
+
+
+def _run_stack_up(args: argparse.Namespace, settings: Settings) -> int:
+    plan = build_stack_up_plan(
+        settings,
+        mode=args.mode,
+        with_opencti=args.with_opencti,
+        with_thehive=args.with_thehive,
+        with_monitoring=args.with_monitoring,
+        build_image=args.build,
+        pull_models=not args.no_pull_models,
+    )
+    outcome = execute_stack_up(plan, dry_run=args.dry_run)
+    print(outcome.model_dump_json(indent=2))
+    return 0
+
+
+def _run_stack_down(args: argparse.Namespace, settings: Settings) -> int:
+    outcome = execute_stack_down(dry_run=args.dry_run)
+    print(outcome.model_dump_json(indent=2))
+    return 0
+
+
+def _run_stack_status(args: argparse.Namespace, settings: Settings) -> int:
+    print(json.dumps(stack_status(settings), indent=2))
     return 0
 
 

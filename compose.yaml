@@ -29,6 +29,19 @@ services:
       retries: 3
       start_period: 15s
 
+  ui:
+    <<: *app-defaults
+    command: ["ui", "--host", "0.0.0.0", "--port", "8085", "--allow-container-bind"]
+    ports:
+      - "127.0.0.1:8085:8085"  # published on host loopback only
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8085/healthz', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+
   ingest:
     <<: *app-defaults
     entrypoint: ["/bin/sh", "-c"]
@@ -94,8 +107,30 @@ services:
       - "127.0.0.1:3000:3000"
     restart: unless-stopped
 
+  thehive:
+    image: strangebee/thehive:5.5.0-1
+    profiles: [secops]
+    ports:
+      - "127.0.0.1:9000:9000"
+    volumes:
+      - thehive_data:/opt/thp/thehive/data
+    restart: unless-stopped
+
+  opencti:
+    image: opencti/platform:6.9.29
+    profiles: [opencti]
+    environment:
+      APP__PORT: "8080"
+      APP__ADMIN__EMAIL: admin@opencti.local
+      APP__ADMIN__PASSWORD: ${OPENCTI_ADMIN_PASSWORD:-ChangeMeOpenCTI!}
+      APP__ADMIN__TOKEN: ${OPENCTI_TOKEN:-00000000-0000-4000-8000-000000000001}
+    ports:
+      - "127.0.0.1:8080:8080"
+    restart: unless-stopped
+
 volumes:
   ollama_models:
   qdrant_storage:
   prometheus_data:
   grafana_data:
+  thehive_data:

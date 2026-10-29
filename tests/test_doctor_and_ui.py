@@ -30,6 +30,11 @@ from cti_automator.models import (
     TTPMapping,
 )
 from cti_automator.parsers.pdf import PDFTextExtractor
+from cti_automator.stack import (
+    build_stack_up_plan,
+    execute_stack_down,
+    execute_stack_up,
+)
 from cti_automator.ui import create_ui_app, is_loopback_host
 
 
@@ -295,3 +300,91 @@ def test_ui_endpoints_enforce_csrf_header_and_analyze_pdf(
             json={"analysis": payload["analysis"], "confirm": False},
         )
         assert unconfirmed.status_code == 400
+
+
+def test_stack_up_bootstraps_env_reuses_host_services_and_executes(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / ".env.example").write_text(
+        "OPENCTI_TOKEN=\nOPENCTI_ADMIN_PASSWORD=\nCOMPOSE_PROFILES=\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "compose.yaml").write_text("services: {}\n", encoding="utf-8")
+
+    # Simulate Ollama already running on host, while Qdrant is missing
+    session = Mock(spec=requests.Session)
+
+    def fake_get(url: str, **kwargs: Any) -> Any:
+        if "11434" in url:
+            resp = Mock(spec=requests.Response)
+            resp.status_code = 200
+            resp.json.return_value = {"version": OLLAMA_RECOMMENDED_VERSION}
+            return resp
+        raise requests.ConnectionError("offline")
+
+    session.get.side_effect = fake_get
+    report = run_doctor(Settings(), session=session)
+
+    plan = build_stack_up_plan(
+        Settings(),
+        root=tmp_path,
+        mode="standard",
+        with_opencti=True,
+        build_image=True,
+        doctor_report=report,
+    )
+    assert plan.env_bootstrapped is True
+    assert (tmp_path / ".env").is_file()
+    assert ((tmp_path / ".env").stat().st_mode & 0o777) == 0o600
+    assert (tmp_path / "state").is_dir()
+    # Ollama was detected on host, so 'local-ai' profile is skipped and 'ollama' reused
+    assert "ollama" in plan.reused_host_services
+    assert "local-ai" not in plan.profiles
+    assert "memory" in plan.profiles
+    assert "opencti" in plan.profiles
+
+    executed_cmds: list[tuple[str, ...]] = []
+
+    def fake_runner(cmd: Any) -> Any:
+        executed_cmds.append(tuple(cmd))
+        return Mock(returncode=0)
+
+    dry = execute_stack_up(plan, dry_run=True, runner=fake_runner)
+    assert dry.executed is False
+    assert not executed_cmds
+
+    live = execute_stack_up(plan, dry_run=False, runner=fake_runner)
+    assert live.executed is True
+    assert len(executed_cmds) == len(plan.commands)
+
+    down_plan = execute_stack_down(root=tmp_path, dry_run=False, runner=fake_runner)
+    assert down_plan.executed is True
+    assert down_plan.commands[0][-1] == "down"
+
+
+def test_cli_up_down_status_dry_run(
+    monkeypatch: pytest.MonkeyPatch, capsys: Any
+) -> None:
+    session = Mock(spec=requests.Session)
+    session.get.side_effect = requests.ConnectionError("offline")
+    monkeypatch.setattr(
+        "cti_automator.stack.run_doctor",
+        lambda settings, timeout=1.0: run_doctor(settings, session=session),
+    )
+    assert main(["up", "--mode", "full", "--dry-run"]) == 0
+    up_out = json.loads(capsys.readouterr().out)
+    assert up_out["action"] == "up"
+    assert up_out["mode"] == "full"
+    assert up_out["executed"] is False
+    assert "monitoring" in up_out["profiles"]
+
+    assert main(["down", "--dry-run"]) == 0
+    down_out = json.loads(capsys.readouterr().out)
+    assert down_out["action"] == "down"
+    assert down_out["executed"] is False
+
+    assert main(["status"]) == 0
+    status_out = json.loads(capsys.readouterr().out)
+    assert "endpoints" in status_out
+    assert "doctor" in status_out
+
