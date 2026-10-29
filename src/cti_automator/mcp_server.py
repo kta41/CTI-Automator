@@ -10,7 +10,7 @@ from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
-from cti_automator.analyzer import PDFAnalyzer
+from cti_automator.analyzer import PDFAnalyzer, resolve_authorized_path
 from cti_automator.config import Settings
 from cti_automator.connectors import OTXClient, ThreatFoxClient
 from cti_automator.detections import generate_sigma_rules, generate_yara_rule
@@ -34,6 +34,11 @@ def create_mcp_server(settings: Settings | None = None) -> FastMCP:
     runtime_settings = settings or Settings.from_env()
     configure_logging(runtime_settings.log_level)
     enrichment = EnrichmentService(runtime_settings)
+    notifier = WebhookNotifier(runtime_settings)
+
+    def _pdf_path(file: str) -> Path:
+        return resolve_authorized_path(Path(file), runtime_settings.allowed_pdf_dir)
+
     server = FastMCP(
         name="cti-automator",
         mask_error_details=True,
@@ -60,7 +65,7 @@ def create_mcp_server(settings: Settings | None = None) -> FastMCP:
         file: str, enrich: list[Provider] | None = None
     ) -> dict[str, object]:
         """Analyze a local PDF and return validated IoCs and ATT&CK mappings."""
-        analysis = PDFAnalyzer(runtime_settings).analyze(Path(file))
+        analysis = PDFAnalyzer(runtime_settings).analyze(_pdf_path(file))
         analysis = analysis.model_copy(
             update={"indicators": enrichment.enrich(analysis.indicators, enrich or ())}
         )
@@ -70,7 +75,7 @@ def create_mcp_server(settings: Settings | None = None) -> FastMCP:
     @observe("mcp", new_run=True)
     def export_pdf_to_opencti(file: str, enrich: list[Provider] | None = None) -> str:
         """Analyze a local PDF and import its STIX bundle into OpenCTI."""
-        analysis = PDFAnalyzer(runtime_settings).analyze(Path(file))
+        analysis = PDFAnalyzer(runtime_settings).analyze(_pdf_path(file))
         analysis = analysis.model_copy(
             update={"indicators": enrichment.enrich(analysis.indicators, enrich or ())}
         )
@@ -80,7 +85,7 @@ def create_mcp_server(settings: Settings | None = None) -> FastMCP:
     @observe("mcp", new_run=True)
     def export_pdf_to_stix(file: str, enrich: list[Provider] | None = None) -> str:
         """Analyze a local PDF and return its serialized STIX bundle."""
-        analysis = PDFAnalyzer(runtime_settings).analyze(Path(file))
+        analysis = PDFAnalyzer(runtime_settings).analyze(_pdf_path(file))
         analysis = analysis.model_copy(
             update={"indicators": enrichment.enrich(analysis.indicators, enrich or ())}
         )
@@ -160,16 +165,16 @@ def create_mcp_server(settings: Settings | None = None) -> FastMCP:
     @observe("mcp", new_run=True)
     def generate_detections(file: str) -> list[dict[str, object]]:
         """Generate YARA and SIGMA proposals (dry-run summaries, no writes)."""
-        analysis = PDFAnalyzer(runtime_settings).analyze(Path(file))
+        analysis = PDFAnalyzer(runtime_settings).analyze(_pdf_path(file))
         rules = [generate_yara_rule(analysis)]
         rules.extend(generate_sigma_rules(analysis))
-        return [rule.summary() for rule in rules]
+        return [{**rule.summary(), "content": rule.content} for rule in rules]
 
     @server.tool
     @observe("mcp", new_run=True)
     def remember_analysis(file: str) -> dict[str, object]:
         """Store one analyzed PDF in the configured historical memory."""
-        analysis = PDFAnalyzer(runtime_settings).analyze(Path(file))
+        analysis = PDFAnalyzer(runtime_settings).analyze(_pdf_path(file))
         return (
             MemoryService(runtime_settings).remember(analysis).model_dump(mode="json")
         )
@@ -201,7 +206,7 @@ def create_mcp_server(settings: Settings | None = None) -> FastMCP:
             "critical",
         }:
             raise ValueError("severity must be low, medium, high or critical")
-        analysis = PDFAnalyzer(runtime_settings).analyze(Path(file))
+        analysis = PDFAnalyzer(runtime_settings).analyze(_pdf_path(file))
         case = build_case(
             analysis,
             severity=cast("CaseSeverity | None", severity),
@@ -223,10 +228,8 @@ def create_mcp_server(settings: Settings | None = None) -> FastMCP:
         destination: str, message: str, dry_run: bool = True
     ) -> dict[str, object]:
         """Send a signed ChatOps notification; dry-run is the default."""
-        return (
-            WebhookNotifier(runtime_settings)
-            .notify(destination, message, dry_run=dry_run)
-            .model_dump(mode="json")
+        return notifier.notify(destination, message, dry_run=dry_run).model_dump(
+            mode="json"
         )
 
     return server

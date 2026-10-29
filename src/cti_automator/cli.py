@@ -18,6 +18,7 @@ from cti_automator.detections import (
     generate_yara_rule,
     validate_directory,
 )
+from cti_automator.doctor import run_doctor
 from cti_automator.enrichment import EnrichmentService
 from cti_automator.exceptions import CTIAutomatorError
 from cti_automator.exporters import OpenCTIExporter, STIXExporter
@@ -42,6 +43,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     analyze = subparsers.add_parser("analyze-pdf", help="Analyze a PDF report.")
     analyze.add_argument("file", type=Path)
+    analyze.add_argument("--output", type=Path, help="Save validated PDFAnalysis JSON.")
     analyze.add_argument(
         "--enrich", nargs="+", choices=("virustotal", "shodan"), default=[]
     )
@@ -124,6 +126,26 @@ def build_parser() -> argparse.ArgumentParser:
     memory_recall.add_argument("--limit", type=int, default=5)
     memory_recall.set_defaults(handler=_memory_recall)
 
+    memory_forget = subparsers.add_parser(
+        "memory-forget",
+        help="Delete expired historical memory fragments past retention.",
+    )
+    memory_forget.set_defaults(handler=_memory_forget)
+
+    doctor = subparsers.add_parser(
+        "doctor",
+        help="Check local OpenCTI, TheHive, Ollama and Qdrant and propose installation.",
+    )
+    doctor.set_defaults(handler=_run_doctor)
+
+    ui = subparsers.add_parser(
+        "ui",
+        help="Run the local loopback web UI.",
+    )
+    ui.add_argument("--host", default="127.0.0.1", help="Loopback interface only.")
+    ui.add_argument("--port", type=int, default=8080, help="Port for local web UI.")
+    ui.set_defaults(handler=_run_ui)
+
     secops = subparsers.add_parser(
         "create-secops-case",
         help="Create a TheHive or Cortex XSOAR case from one PDF analysis.",
@@ -190,6 +212,9 @@ def main(argv: Sequence[str] | None = None) -> int:
                 "memory recall limit must be between 1 and 25",
                 "memory query cannot be empty",
                 "notification message cannot be empty",
+                "Local UI requires a loopback host (127.0.0.1, ::1 or localhost)",
+                "UI port must be between 1 and 65535",
+                "PDF file path is outside CTI_ALLOWED_PDF_DIR",
             }
             else f"{type(exc).__name__}; check configuration and structured error events"
         )
@@ -212,7 +237,10 @@ def _analyze_pdf(args: argparse.Namespace, settings: Settings) -> int:
             )
         }
     )
-    print(analysis.model_dump_json(indent=2))
+    serialized = analysis.model_dump_json(indent=2)
+    if getattr(args, "output", None):
+        args.output.write_text(serialized, encoding="utf-8")
+    print(serialized)
     return 0
 
 
@@ -348,6 +376,34 @@ def _memory_remember(args: argparse.Namespace, settings: Settings) -> int:
 def _memory_recall(args: argparse.Namespace, settings: Settings) -> int:
     fragments = MemoryService(settings).recall(args.query, limit=args.limit)
     print(json.dumps([item.model_dump(mode="json") for item in fragments], indent=2))
+    return 0
+
+
+def _memory_forget(args: argparse.Namespace, settings: Settings) -> int:
+    deleted = MemoryService(settings).forget()
+    print(json.dumps({"deleted": deleted}))
+    return 0
+
+
+def _run_doctor(args: argparse.Namespace, settings: Settings) -> int:
+    report = run_doctor(settings)
+    print(report.model_dump_json(indent=2))
+    return 0
+
+
+def _run_ui(args: argparse.Namespace, settings: Settings) -> int:
+    import uvicorn
+
+    from cti_automator.ui import create_ui_app, is_loopback_host
+
+    if not 1 <= args.port <= 65535:
+        raise ValueError("UI port must be between 1 and 65535")
+    if not is_loopback_host(args.host):
+        raise ValueError(
+            "Local UI requires a loopback host (127.0.0.1, ::1 or localhost)"
+        )
+    app = create_ui_app(settings)
+    uvicorn.run(app, host=args.host, port=args.port, log_config=None, access_log=False)
     return 0
 
 

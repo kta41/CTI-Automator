@@ -193,6 +193,7 @@ class TheHiveAdapter:
         session: requests.Session | None = None,
     ) -> None:
         url, token = settings.require_thehive_credentials()
+        _assert_safe_destination(url, settings.secops_allowed_hosts)
         self._settings = settings
         self._transport = _CaseTransport(settings, url, token, session)
 
@@ -263,6 +264,7 @@ class CortexXSOARAdapter:
         session: requests.Session | None = None,
     ) -> None:
         url, token = settings.require_xsoar_credentials()
+        _assert_safe_destination(url, settings.secops_allowed_hosts)
         self._settings = settings
         self._transport = _CaseTransport(settings, url, token, session)
 

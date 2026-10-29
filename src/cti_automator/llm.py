@@ -41,9 +41,11 @@ class OllamaClient:
                     "prompt": prompt,
                     "format": "json",
                     "stream": False,
+                    "options": {"temperature": 0},
                 },
                 timeout=self._settings.request_timeout,
                 verify=self._settings.verify_tls,
+                allow_redirects=False,
             )
             response.raise_for_status()
             payload = response.json()
@@ -110,6 +112,7 @@ class OpenAICompatibleClient:
                 },
                 timeout=self._settings.request_timeout,
                 verify=self._settings.verify_tls,
+                allow_redirects=False,
             )
             response.raise_for_status()
             payload = response.json()

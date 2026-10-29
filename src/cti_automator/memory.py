@@ -89,6 +89,7 @@ class OllamaEmbeddingClient:
                 },
                 timeout=self._settings.request_timeout,
                 verify=self._settings.verify_tls,
+                allow_redirects=False,
             )
             response.raise_for_status()
             payload = response.json()
@@ -131,6 +132,7 @@ class RemoteEmbeddingClient:
                 json={"model": self._settings.memory_embedding_model, "input": text},
                 timeout=self._settings.request_timeout,
                 verify=self._settings.verify_tls,
+                allow_redirects=False,
             )
             response.raise_for_status()
             payload = response.json()
@@ -163,6 +165,7 @@ class QdrantVectorStore:
     ) -> None:
         self._settings = settings
         self._session = session or requests.Session()
+        self._ensured_collections: set[str] = set()
 
     def _call(
         self,
@@ -193,15 +196,21 @@ class QdrantVectorStore:
             raise MemoryStoreError("Memory store returned a non-object response")
         return payload
 
-    def ensure_collection(self, collection: str) -> None:
-        """Create the collection when missing; vector size is provider dependent."""
+    def ensure_collection(self, collection: str, vector_size: int = 768) -> None:
+        """Create the collection when missing; vector size matches the model."""
+        if vector_size <= 0:
+            raise MemoryStoreError("Memory collection vector size must be positive")
         self._call(
             "PUT",
             f"/collections/{collection}",
-            json_body={"vectors": {"size": 0, "distance": "Cosine"}},
+            json_body={"vectors": {"size": vector_size, "distance": "Cosine"}},
+            accepted=(200, 201, 409),
         )
+        self._ensured_collections.add(collection)
 
     def upsert(self, collection: str, points: Sequence[VectorPoint]) -> None:
+        if points and collection not in self._ensured_collections:
+            self.ensure_collection(collection, vector_size=len(points[0].vector))
         self._call(
             "PUT",
             f"/collections/{collection}/points",

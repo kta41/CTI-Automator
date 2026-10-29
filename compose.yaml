@@ -35,10 +35,10 @@ services:
     command:
       - |
         while true; do
-          cti-automator ingest-otx --opencti &&
-          cti-automator ingest-threatfox --opencti &&
+          cti-automator ingest-otx --opencti || true
+          cti-automator ingest-threatfox --opencti || true
           if [ -n "$$CTI_REPOSITORY_ALLOWLIST" ]; then
-            cti-automator ingest-repositories --opencti
+            cti-automator ingest-repositories --opencti || true
           fi
           sleep 1800
         done
@@ -49,7 +49,7 @@ services:
     restart: unless-stopped
 
   ollama:
-    image: ollama/ollama:latest
+    image: ollama/ollama:0.5.12
     profiles: [local-ai]
     ports:
       - "127.0.0.1:11434:11434"
@@ -58,7 +58,7 @@ services:
     restart: unless-stopped
 
   qdrant:
-    image: qdrant/qdrant:latest
+    image: qdrant/qdrant:v1.13.4
     profiles: [memory]
     volumes:
       - qdrant_storage:/qdrant/storage

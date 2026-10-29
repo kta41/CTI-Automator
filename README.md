@@ -190,6 +190,8 @@ GitHub's unauthenticated rate limits. Checkpoints never store credentials.
 
 ```bash
 cti-automator --help
+cti-automator doctor
+cti-automator ui --host 127.0.0.1 --port 8080
 cti-automator ingest-otx --modified-since 2026-01-01
 cti-automator ingest-threatfox --days 1
 
@@ -197,15 +199,22 @@ cti-automator ingest-otx --opencti
 cti-automator ingest-threatfox --days 7 --opencti
 ```
 
+`cti-automator doctor` checks whether **OpenCTI (`6.9.29`)**, **TheHive (`5.5.0-1`)**,
+**Ollama (`0.5.12`)** and **Qdrant (`v1.13.4`)** are running locally and outputs
+exact Docker installation proposals when any of them is missing.
+`cti-automator ui` launches a loopback-only local web interface to inspect stack
+health, upload and analyze PDFs, filter IoCs/TTPs, preview YARA/SIGMA proposals
+and export STIX 2.1 bundles.
+
 Without `--opencti`, API commands return normalized JSON. Import mode writes
 counts to stdout rather than IoC content.
 
 ### Analyze and export reports
 
 ```bash
-cti-automator analyze-pdf report.pdf
-cti-automator export-pdf report.pdf --stix-output report.bundle.json
-cti-automator export-pdf report.pdf --opencti
+cti-automator analyze-pdf report.pdf --output report.analysis.json
+cti-automator export-pdf report.analysis.json --stix-output report.bundle.json
+cti-automator export-pdf report.analysis.json --opencti
 
 export CTI_REPOSITORY_ALLOWLIST=owner/reports
 export CTI_REPOSITORY_CHECKPOINT="$HOME/.local/state/cti-automator/repositories.json"

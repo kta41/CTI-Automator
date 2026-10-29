@@ -31,6 +31,7 @@ def request_json(
             params=params,
             timeout=timeout,
             verify=verify,
+            allow_redirects=False,
         )
         response.raise_for_status()
         payload = response.json()

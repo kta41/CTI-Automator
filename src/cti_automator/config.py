@@ -53,6 +53,10 @@ class Settings(BaseModel):
     repository_checkpoint: str = "/state/repositories.json"
     repository_max_files: int = Field(default=20, ge=1, le=100)
     repository_max_bytes: int = Field(default=100_000, ge=1, le=1_000_000)
+    pdf_max_bytes: int = Field(default=20_000_000, ge=1, le=100_000_000)
+    pdf_max_pages: int = Field(default=100, ge=1, le=2_000)
+    allowed_pdf_dir: str | None = None
+    analysis_cache_dir: str | None = None
     log_level: str = "INFO"
     dlp_enabled: bool = False
     dlp_email_domains: tuple[str, ...] = ()
@@ -195,6 +199,10 @@ class Settings(BaseModel):
             "CTI_REPOSITORY_CHECKPOINT": "repository_checkpoint",
             "CTI_REPOSITORY_MAX_FILES": "repository_max_files",
             "CTI_REPOSITORY_MAX_BYTES": "repository_max_bytes",
+            "CTI_PDF_MAX_BYTES": "pdf_max_bytes",
+            "CTI_PDF_MAX_PAGES": "pdf_max_pages",
+            "CTI_ALLOWED_PDF_DIR": "allowed_pdf_dir",
+            "CTI_ANALYSIS_CACHE_DIR": "analysis_cache_dir",
             "CTI_LOG_LEVEL": "log_level",
             "CTI_DLP_ENABLED": "dlp_enabled",
             "CTI_MEMORY_ENABLED": "memory_enabled",

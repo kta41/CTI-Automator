@@ -105,6 +105,15 @@ def generate_yara_rule(analysis: PDFAnalysis) -> DetectionRule:
     ]
     if not indicators:
         raise DetectionRuleError("analysis has no indicators usable in YARA rules")
+    hash_conditions: list[str] = []
+    for item in indicators:
+        val = item.value.lower()
+        if item.indicator_type == IndicatorType.FILE_HASH_MD5:
+            hash_conditions.append(f'hash.md5(0, filesize) == "{_yara_escape(val)}"')
+        elif item.indicator_type == IndicatorType.FILE_HASH_SHA1:
+            hash_conditions.append(f'hash.sha1(0, filesize) == "{_yara_escape(val)}"')
+        elif item.indicator_type == IndicatorType.FILE_HASH_SHA256:
+            hash_conditions.append(f'hash.sha256(0, filesize) == "{_yara_escape(val)}"')
     name = f"CTI_{_slug(analysis.source_document)}_{_short_digest(analysis.source_document)}"
     lines = [
         f"rule {name} {{",
@@ -122,7 +131,12 @@ def generate_yara_rule(analysis: PDFAnalysis) -> DetectionRule:
     ]
     for index, item in enumerate(indicators, start=1):
         lines.append(f'    $s{index:02d} = "{_yara_escape(item.value)}"')
-    lines.extend(["  condition:", "    any of them", "}"])
+    condition_expr = (
+        f"any of them or ({' or '.join(hash_conditions)})"
+        if hash_conditions
+        else "any of them"
+    )
+    lines.extend(["  condition:", f"    {condition_expr}", "}"])
     content = "\n".join(lines) + "\n"
     rule = DetectionRule(
         rule_format="yara",

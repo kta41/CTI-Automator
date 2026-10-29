@@ -7,7 +7,7 @@ from datetime import UTC, datetime
 from ipaddress import ip_address
 from uuid import NAMESPACE_URL, uuid5
 
-from stix2 import AttackPattern, Bundle, Relationship
+from stix2 import AttackPattern, Bundle, Relationship, Report
 from stix2 import Indicator as STIXIndicator
 
 from cti_automator.exceptions import ExportError
@@ -44,7 +44,9 @@ class STIXExporter:
                 objects[converted.id] = converted
         return Bundle(*objects.values(), allow_custom=True)
 
-    def export_analysis(self, analysis: PDFAnalysis) -> Bundle:
+    def export_analysis(
+        self, analysis: PDFAnalysis, *, include_report: bool = False
+    ) -> Bundle:
         """Export indicators and ATT&CK mappings from one PDF analysis."""
         objects: list[object] = []
         indicator_objects: dict[str, STIXIndicator] = {}
@@ -72,6 +74,20 @@ class STIXExporter:
                         description=ttp.rationale,
                     )
                 )
+        if include_report and objects:
+            object_ids = [getattr(item, "id", "") for item in objects]
+            objects.append(
+                Report(
+                    id=f"report--{uuid5(NAMESPACE_URL, f'cti-automator-report|{analysis.source_document}')}",
+                    created=datetime(1970, 1, 1, tzinfo=UTC),
+                    modified=datetime(1970, 1, 1, tzinfo=UTC),
+                    name=f"CTI Report: {analysis.source_document}",
+                    description=analysis.summary,
+                    published=datetime(1970, 1, 1, tzinfo=UTC),
+                    report_types=["threat-report"],
+                    object_refs=object_ids,
+                )
+            )
         return Bundle(*objects, allow_custom=True)
 
     @staticmethod
